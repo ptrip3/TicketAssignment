@@ -4,11 +4,6 @@
 pyodbc>=5.0; sys_platform == "win32"
 python-tds>=1.13; sys_platform != "win32"
 
-# Real calendar date pickers in the "Set Status" dialog (name_selector.py's
-# _open_status_dialog), replacing hand-typed YYYY-MM-DD text fields. Pure
-# Python + tkinter, no platform-specific concerns.
-tkcalendar>=1.5.0
-
 # Modern ttk theme (Windows 11-style, light/dark), applied in
 # name_selector.py's _apply_theme_styles(). Pure Python + tkinter, no
 # platform-specific concerns.

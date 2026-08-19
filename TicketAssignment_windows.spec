@@ -11,7 +11,6 @@
 
 # -*- mode: python ; coding: utf-8 -*-
 
-import os
 from PyInstaller.utils.hooks import collect_data_files
 
 a = Analysis(
@@ -36,10 +35,6 @@ a = Analysis(
         # try `pyinstaller --collect-all pyodbc TicketAssignment_windows.spec`
         # instead.
         'pyodbc',
-        # tkcalendar (the Set Status dialog's date pickers) is pure Python
-        # + tkinter with no bundled data files, so this is purely a safety
-        # net -- PyInstaller's analyzer should already find it.
-        'tkcalendar',
         'sv_ttk',
     ],
     hookspath=[],
@@ -55,24 +50,6 @@ a = Analysis(
     ],
     noarchive=False,
 )
-
-# babel (pulled in by tkcalendar for locale-aware month/day names) ships
-# locale data for ~1,080 locales, ~28MB -- this app is English-only (see
-# the explicit locale="en_US" passed to every DateEntry/Calendar in
-# name_selector.py), so nothing but English + "root" (the base locale
-# everything else inherits from, and still required internally even
-# though it's not a locale you'd ever select) is reachable at runtime.
-# Trimming here instead of just not calling collect_data_files('babel')
-# ourselves because PyInstaller's own hook-babel.py adds all of it
-# automatically -- this filters that back down after the fact.
-def _is_unneeded_babel_locale(data_entry):
-    src, dest = data_entry[0], data_entry[1]
-    if "locale-data" not in dest.replace("/", "\\"):
-        return False
-    name = os.path.basename(src)
-    return not (name == "root.dat" or name.startswith("en"))
-
-a.datas = [d for d in a.datas if not _is_unneeded_babel_locale(d)]
 
 pyz = PYZ(a.pure)
 

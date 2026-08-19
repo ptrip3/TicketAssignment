@@ -41,6 +41,7 @@ at once. Runs on Windows and macOS.
 |---|---|
 | `name_selector.py` | The Tkinter app itself (UI + in-memory state). |
 | `models.py` | `Status` / `StatusDuration` — shared domain types. |
+| `datepicker.py` | Calendar date-picker widgets, built directly on tkinter. |
 | `db.py` | All SQL Server access (`Database` class) — connections, schema setup, load/save. Dual-backend, see below. |
 | `schema.sql` | The table definitions. Idempotent; `db.py` can also apply it for you. |
 | `merge_locations.sql` | One-off administrative script for merging two locations into one. |
@@ -328,24 +329,22 @@ The source in this repository is released under the
 
 The source here doesn't vendor any third-party code — everything comes
 from PyPI at install time — but the **built** `.exe`/`.app` bundles those
-dependencies, and their licenses travel with the binary:
+dependencies, and their licenses travel with the binary. Every runtime
+dependency is permissively licensed:
 
 | Dependency | License |
 |---|---|
-| [tkcalendar](https://github.com/j4321/tkcalendar) | **GPL-3.0** |
 | [sv-ttk](https://github.com/rdbende/Sun-Valley-ttk-theme) | MIT |
 | [python-tds](https://github.com/denisenkom/pytds) | MIT |
 | [pyodbc](https://github.com/mkleehammer/pyodbc) | MIT |
 | [pyspnego](https://github.com/jborean93/pyspnego) | MIT |
-| [Babel](https://github.com/python-babel/babel) (via tkcalendar) | BSD-3-Clause |
 
-Note that `tkcalendar` is GPL-3.0. MIT source code is GPL-compatible, so
-licensing this repository under MIT is fine — but a distributed binary
-that bundles `tkcalendar` is a combined work subject to GPL-3.0 terms,
-which include making the corresponding source available to whoever
-receives the binary. If you redistribute the built app outside your own
-organization, either honor those terms (this repository being public
-satisfies the source-availability part) or swap `tkcalendar` for a
-permissively licensed date picker.
+The date pickers in the Set Status dialog are implemented directly on
+`tkinter` (see `datepicker.py`) rather than pulling in a calendar
+library. That's deliberate: the widely used `tkcalendar` is GPL-3.0,
+which would have made a redistributed binary a combined work subject to
+GPL terms. Rolling the widget in-house keeps the whole distributable
+permissively licensed, and drops the transitive `Babel` dependency
+(~1.1 MB off the built `.exe`).
 
 This is a plain-language summary, not legal advice.

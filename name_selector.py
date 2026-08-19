@@ -13,7 +13,7 @@ import sys
 import db  # noqa: F401 (module referenced as db.DEFAULT_PORT etc. below)
 from db import Database, DatabaseError, empty_location_data, STATUS_TYPES
 from models import Status, StatusDuration
-from tkcalendar import DateEntry, Calendar
+from datepicker import DateField, DatePicker
 import sv_ttk
 
 def _try_optional_import(module_name, purpose):
@@ -174,9 +174,9 @@ class TicketAssignmentApp:
 
         # sv_ttk only themes ttk widgets. What's left here is strictly for
         # things it doesn't reach: raw (non-ttk) tk widgets (status_text,
-        # dialog backgrounds), tkcalendar (its own separate widget, not
-        # ttk-themed), and our own semantic status colors (available/
-        # unavailable) that aren't part of any generic theme.
+        # dialog backgrounds, the date picker's day cells) and our own
+        # semantic status colors (available/unavailable), which aren't
+        # part of any generic theme.
         self.colors = {
             "light": {
                 "bg": "#fafafa",
@@ -1786,8 +1786,8 @@ class TicketAssignmentApp:
 
         sv_ttk handles every ttk widget on its own (see the set_theme()
         call in __init__) -- all that's left here is the handful of things
-        it doesn't reach: raw tk widgets, tkcalendar, and our own semantic
-        status colors.
+        it doesn't reach: raw tk widgets, the date picker's day cells, and
+        our own semantic status colors.
         """
         theme = "dark" if self.dark_mode.get() else "light"
         colors = self.colors[theme]
@@ -1990,10 +1990,8 @@ class TicketAssignmentApp:
     def _open_status_dialog(self, name, preselect=None):
         """Open a dialog to view/set name's status.
 
-        Replaces the old row of 6 status buttons plus a shared pair of
-        Start/End text-entry fields (typed as free-form YYYY-MM-DD) with
-        one dialog per person: a status selector plus real calendar date
-        pickers (tkcalendar.DateEntry) for whichever dates that status
+        One dialog per person: a status selector plus calendar date
+        pickers (see datepicker.py) for whichever dates that status
         actually needs. Pre-fills from whatever status is currently
         active, so this doubles as an editor, not just a one-shot setter.
 
@@ -2037,21 +2035,6 @@ class TicketAssignmentApp:
 
         theme = "dark" if self.dark_mode.get() else "light"
         colors = self.colors[theme]
-        calendar_style = dict(
-            background=colors["accent_bg"],
-            foreground=colors["accent_fg"],
-            headersbackground=colors["bg"],
-            headersforeground=colors["fg"],
-            normalbackground=colors["bg"],
-            normalforeground=colors["fg"],
-            weekendbackground=colors["weekend_bg"],
-            weekendforeground=colors["fg"],
-            othermonthbackground=colors["bg"],
-            othermonthforeground=colors["muted_fg"],
-            selectbackground=colors["accent_bg"],
-            selectforeground=colors["accent_fg"],
-            bordercolor=colors["border"],
-        )
 
         dialog = tk.Toplevel(self.root)
         dialog.title(f"Set Status — {name}")
@@ -2124,30 +2107,17 @@ class TicketAssignmentApp:
         hint_var = tk.StringVar()
         hint_label = ttk.Label(date_frame, textvariable=hint_var, font=_font(9), wraplength=380, justify="left")
         start_label = ttk.Label(date_frame, text="Date:")
-        # Pinned to English explicitly -- tkcalendar otherwise defaults to
-        # whatever babel.default_locale() reads off the OS, which is both
-        # unpredictable (depends on the machine's Windows display
-        # language) and, now that the build only bundles English locale
-        # data (see TicketAssignment_windows.spec), the only locale that
-        # would actually work if left to guess.
-        start_entry = DateEntry(date_frame, date_pattern="yyyy-mm-dd", width=12, locale="en_US", **calendar_style)
 
         default_start = current_duration.start_date if (current_duration and current_type == "out_of_office") else today
-        start_entry.set_date(default_start)
+        start_entry = DateField(date_frame, colors, initial=default_start)
 
-        # Vacation/Sick Leave: a real range calendar -- click a start date
-        # (the end defaults to the following day), then click again to
-        # pick the actual end date; the days in between get a highlighted
-        # bar, matching the two-click range pickers on booking sites.
+        # Vacation/Sick Leave: a range calendar -- click a start date (the
+        # end defaults to the following day), then click again to pick the
+        # actual end date; the days in between get a highlighted bar.
         # Half Day is a checkbox here rather than its own status -- it
         # collapses the range to a single day.
-        range_calendar = Calendar(
-            range_frame, date_pattern="yyyy-mm-dd", selectmode="day", showweeknumbers=False,
-            locale="en_US", **calendar_style
-        )
+        range_calendar = DatePicker(range_frame, colors)
         range_calendar.grid(row=0, column=0, sticky="w")
-        range_calendar.tag_config("range_endpoint", background=colors["accent_bg"], foreground=colors["accent_fg"])
-        range_calendar.tag_config("range_between", background=colors["accent_soft_bg"], foreground=colors["fg"])
 
         range_label_var = tk.StringVar()
         ttk.Label(range_frame, textvariable=range_label_var, font=_font(9)).grid(
@@ -2166,36 +2136,27 @@ class TicketAssignmentApp:
             range_state = {"start": None, "end": None, "end_is_default": True}
 
         def _refresh_range_display():
-            range_calendar.calevent_remove("all")
-            # Clicking a date also sets the calendar's own native "selected
-            # day" highlight (independent of our calevent tags above), and
-            # that native highlight doesn't move on its own when we change
-            # the range programmatically (e.g. checking Half Day collapses
-            # end back to start, but the old end date's native highlight
-            # would otherwise linger until the next actual click). Clearing
-            # it here and relying only on the calevent tags below keeps the
-            # highlighted cells always in sync with range_state.
-            range_calendar.selection_clear()
+            # The picker paints only what set_range() tells it to, so the
+            # highlighted cells always match range_state exactly -- no
+            # separate "selected day" state to keep in sync.
+            range_calendar.clear_selection()
             start, end = range_state["start"], range_state["end"]
             if start is None:
+                range_calendar.set_range(None, None)
                 range_label_var.set("Click a date to select a start date.")
                 _refresh_period_hint()
                 return
             end = end or start
-            d = start
-            while d <= end:
-                tag = "range_endpoint" if d in (start, end) else "range_between"
-                range_calendar.calevent_create(d, "", tags=[tag])
-                d += timedelta(days=1)
+            range_calendar.set_range(start, end)
             if half_day_var.get() or start == end:
                 range_label_var.set(f"{start}" + (" (half day)" if half_day_var.get() else ""))
             else:
                 range_label_var.set(f"{start} to {end}")
-            range_calendar.see(start)
+            range_calendar.show_month(start)
             _refresh_period_hint()
 
         def _on_range_click(event=None):
-            clicked = range_calendar.selection_get()
+            clicked = range_calendar.get_date()
             if clicked is None:
                 return
             if half_day_var.get():
@@ -2219,7 +2180,7 @@ class TicketAssignmentApp:
                 range_state["end_is_default"] = False
             _refresh_range_display()
 
-        range_calendar.bind("<<CalendarSelected>>", _on_range_click)
+        range_calendar.bind("<<DateSelected>>", _on_range_click)
 
         # Which half of the day this half day blocks, and why: derived from
         # this person's own schedule for the day picked (see
