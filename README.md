@@ -318,3 +318,34 @@ This is a one-time step per machine.
 - The macOS build is unsigned and unnotarized, hence the Gatekeeper
   workaround above. Fine for internal distribution; wider distribution
   without that warning would need an Apple Developer ID and notarization.
+
+## License
+
+The source in this repository is released under the
+[MIT License](LICENSE).
+
+### Third-party dependencies
+
+The source here doesn't vendor any third-party code — everything comes
+from PyPI at install time — but the **built** `.exe`/`.app` bundles those
+dependencies, and their licenses travel with the binary:
+
+| Dependency | License |
+|---|---|
+| [tkcalendar](https://github.com/j4321/tkcalendar) | **GPL-3.0** |
+| [sv-ttk](https://github.com/rdbende/Sun-Valley-ttk-theme) | MIT |
+| [python-tds](https://github.com/denisenkom/pytds) | MIT |
+| [pyodbc](https://github.com/mkleehammer/pyodbc) | MIT |
+| [pyspnego](https://github.com/jborean93/pyspnego) | MIT |
+| [Babel](https://github.com/python-babel/babel) (via tkcalendar) | BSD-3-Clause |
+
+Note that `tkcalendar` is GPL-3.0. MIT source code is GPL-compatible, so
+licensing this repository under MIT is fine — but a distributed binary
+that bundles `tkcalendar` is a combined work subject to GPL-3.0 terms,
+which include making the corresponding source available to whoever
+receives the binary. If you redistribute the built app outside your own
+organization, either honor those terms (this repository being public
+satisfies the source-availability part) or swap `tkcalendar` for a
+permissively licensed date picker.
+
+This is a plain-language summary, not legal advice.
