@@ -1,0 +1,13 @@
+# Local machine config (SQL Server connection details, dark mode pref, etc.)
+config.ini
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# PyInstaller build output (the .spec files themselves -- e.g.
+# TicketAssignment_mac.spec -- are hand-authored build config, tracked
+# intentionally, not artifacts)
+build/
+dist/

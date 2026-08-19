@@ -1,0 +1,53 @@
+# SQL Server connectivity -- one of these per platform, picked automatically
+# by `pip install` via the environment markers below (see db.py for why
+# there are two backends).
+pyodbc>=5.0; sys_platform == "win32"
+python-tds>=1.13; sys_platform != "win32"
+
+# Real calendar date pickers in the "Set Status" dialog (name_selector.py's
+# _open_status_dialog), replacing hand-typed YYYY-MM-DD text fields. Pure
+# Python + tkinter, no platform-specific concerns.
+tkcalendar>=1.5.0
+
+# Modern ttk theme (Windows 11-style, light/dark), applied in
+# name_selector.py's _apply_theme_styles(). Pure Python + tkinter, no
+# platform-specific concerns.
+sv-ttk>=2.6.0
+
+# Packaging (only needed to build a standalone .exe/.app -- not needed to
+# just run the app with `python name_selector.py`)
+pyinstaller>=6.0
+
+# Everything else is standard library:
+#   tkinter, ttk, messagebox, simpledialog, collections, os, time,
+#   datetime, calendar, threading, configparser, sys, re
+#
+# tkinter ships with the standard CPython installer on both Windows and
+# macOS, so nothing beyond the above needs to be pip-installed.
+#
+# On Windows, pyodbc also needs a matching ODBC driver for SQL Server
+# installed on the machine (a Windows component, not a pip package) --
+# see README.md for how to check what's already installed.
+#
+# On macOS, python-tds needs nothing else installed -- that's the whole
+# point of using it there (see db.py's module docstring).
+
+# Powers optional NTLM domain-login authentication on macOS/Linux (see
+# README.md's "Domain Authentication" section) -- lets techs authenticate
+# with their own domain username/password instead of a SQL Server login,
+# without needing Microsoft's ODBC driver or Homebrew at all. Pure Python
+# + the `cryptography` package (prebuilt wheels, no compiler needed), so
+# unlike the Kerberos path below there's no reason to make this a manual
+# extra step -- it's just always available, and the connection dialog
+# only offers it as a choice, never requires it.
+pyspnego>=0.10.0; sys_platform != "win32"
+
+# Optional, macOS only, NOT installed by this file: if you'd rather use
+# real Kerberos than NTLM above, it needs Microsoft's actual ODBC driver +
+# unixODBC present *before* pyodbc can even build, which most Macs won't
+# have -- install it separately once those are in place:
+#
+#     brew install unixodbc
+#     brew tap microsoft/mssql-release https://github.com/Microsoft/homebrew-mssql-release
+#     brew install msodbcsql17 mssql-tools
+#     pip install pyodbc
