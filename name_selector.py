@@ -913,10 +913,17 @@ class TicketAssignmentApp:
 
     def _on_closing(self):
         """Handle window closing event."""
+        # Stop the background poller *before* saving, not after. It hits
+        # the database every 0.5s, so leaving it running during the
+        # closing save means the two compete for the connection while the
+        # window sits there unresponsive.
+        self.is_initialized = False
         try:
-            self.save_data()  # full save as a final safety net, not just the current location
+            # Every action already saves as it happens, so this is only a
+            # safety net -- scoped to the current location, since that's
+            # the only one this client could have pending changes for.
+            self.save_data(self.current_location.get())
         finally:
-            self.is_initialized = False
             self.root.destroy()
 
     def _start_status_checker(self):

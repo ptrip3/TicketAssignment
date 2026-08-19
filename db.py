@@ -84,6 +84,46 @@ def empty_location_data():
     }
 
 
+# SQL Server caps a single statement at 2100 parameters. Chunking by row
+# count keeps each batched INSERT well under that regardless of how many
+# columns it has, while still collapsing hundreds of rows into a handful
+# of round trips.
+_MAX_PARAMS_PER_STATEMENT = 1800
+
+
+def _values_clause(row_count, column_count):
+    """"(?, ?), (?, ?), ..." for a multi-row INSERT."""
+    one = "(" + ", ".join(["?"] * column_count) + ")"
+    return ", ".join([one] * row_count)
+
+
+def _chunked(rows, column_count):
+    """Split `rows` into batches that stay under the parameter limit."""
+    per_chunk = max(1, _MAX_PARAMS_PER_STATEMENT // max(column_count, 1))
+    for start in range(0, len(rows), per_chunk):
+        yield rows[start:start + per_chunk]
+
+
+def _insert_many(cur, table, columns, rows):
+    """INSERT every row in `rows` using as few statements as possible.
+
+    Each statement is a multi-row INSERT ... VALUES (...), (...), which is
+    one network round trip per chunk rather than per row. Written as
+    literal multi-row SQL rather than cursor.executemany() because the two
+    backends implement executemany differently -- pyodbc replays it row by
+    row unless fast_executemany is enabled -- whereas this collapses the
+    round trips identically on both.
+    """
+    if not rows:
+        return
+    column_list = ", ".join(columns)
+    for chunk in _chunked(rows, len(columns)):
+        cur.execute(
+            f"INSERT INTO {table} ({column_list}) VALUES " + _values_clause(len(chunk), len(columns)),
+            tuple(value for row in chunk for value in row),
+        )
+
+
 class _CursorAdapter:
     """Wraps a raw DB-API cursor so every call site in this file can always
     write `?`-style placeholders with params as a tuple, regardless of
@@ -419,48 +459,69 @@ class Database:
                 )
                 location_id = cur.fetchone()[0]
 
+            # Everything below batches its rows into multi-row INSERTs
+            # (see _insert_many). Issuing one statement per row instead
+            # means a network round trip per row -- unnoticeable against a
+            # local server, but the dominant cost against a remote one,
+            # where a full save could take seconds.
             names_list = list(location_data.get("names", []))
             name_ids = {}
-            for position, person_name in enumerate(names_list):
-                total_count = location_data.get("name_counts", {}).get(person_name, 0)
-                cur.execute(
-                    "INSERT INTO dbo.Names (LocationId, PersonName, QueuePosition, TotalCount) "
-                    "OUTPUT INSERTED.NameId VALUES (?, ?, ?, ?)",
-                    (location_id, person_name, position, total_count),
-                )
-                name_ids[person_name] = cur.fetchone()[0]
+            if names_list:
+                name_counts = location_data.get("name_counts", {})
+                rows = [
+                    (location_id, person_name, position, name_counts.get(person_name, 0))
+                    for position, person_name in enumerate(names_list)
+                ]
+                # OUTPUT returns a row per inserted record, but not
+                # necessarily in input order -- so select PersonName back
+                # alongside the generated id rather than zipping by index.
+                for chunk in _chunked(rows, 4):
+                    cur.execute(
+                        "INSERT INTO dbo.Names (LocationId, PersonName, QueuePosition, TotalCount) "
+                        "OUTPUT INSERTED.NameId, INSERTED.PersonName VALUES "
+                        + _values_clause(len(chunk), 4),
+                        tuple(value for row in chunk for value in row),
+                    )
+                    for name_id, person_name in cur.fetchall():
+                        name_ids[person_name] = name_id
 
             daily_counts = location_data.get("daily_counts", {})
-            for person_name, name_id in name_ids.items():
-                for day, count in daily_counts.get(person_name, {}).items():
-                    if count:
-                        cur.execute(
-                            "INSERT INTO dbo.DailyCounts (NameId, DayOfWeek, DayCount) VALUES (?, ?, ?)",
-                            (name_id, day, count),
-                        )
+            _insert_many(
+                cur, "dbo.DailyCounts", ("NameId", "DayOfWeek", "DayCount"),
+                [
+                    (name_id, day, count)
+                    for person_name, name_id in name_ids.items()
+                    for day, count in daily_counts.get(person_name, {}).items()
+                    if count
+                ],
+            )
 
             schedules = location_data.get("schedules", {})
-            for person_name, name_id in name_ids.items():
-                for day, times in schedules.get(person_name, {}).items():
-                    for time_range in times:
-                        cur.execute(
-                            "INSERT INTO dbo.Schedules (NameId, DayOfWeek, TimeRange) VALUES (?, ?, ?)",
-                            (name_id, day, time_range),
-                        )
+            _insert_many(
+                cur, "dbo.Schedules", ("NameId", "DayOfWeek", "TimeRange"),
+                [
+                    (name_id, day, time_range)
+                    for person_name, name_id in name_ids.items()
+                    for day, times in schedules.get(person_name, {}).items()
+                    for time_range in times
+                ],
+            )
 
+            status_rows = []
             for status_type in STATUS_TYPES:
-                status_dict = location_data.get(f"{status_type}_status", {})
-                for person_name, duration in status_dict.items():
+                for person_name, duration in location_data.get(f"{status_type}_status", {}).items():
                     name_id = name_ids.get(person_name)
                     if name_id is None:
                         continue
-                    cur.execute(
-                        "INSERT INTO dbo.StatusEntries "
-                        "(NameId, StatusType, StartDate, EndDate, HalfDay, HalfDayPeriod) "
-                        "VALUES (?, ?, ?, ?, ?, ?)",
-                        (name_id, status_type, duration.start_date, duration.end_date,
-                         getattr(duration, "half_day", False), getattr(duration, "half_day_period", None)),
-                    )
+                    status_rows.append((
+                        name_id, status_type, duration.start_date, duration.end_date,
+                        getattr(duration, "half_day", False), getattr(duration, "half_day_period", None),
+                    ))
+            _insert_many(
+                cur, "dbo.StatusEntries",
+                ("NameId", "StatusType", "StartDate", "EndDate", "HalfDay", "HalfDayPeriod"),
+                status_rows,
+            )
 
             conn.commit()
         except Exception:
