@@ -1,13 +1,18 @@
-# PyInstaller spec for a single-file, drag-anywhere-and-run Windows .exe
-# (one .exe, nothing else needed on the target machine).
+# PyInstaller spec for the Windows build.
 #
 # Usage (from PowerShell, in this directory, inside a venv with
 # `pip install -r requirements.txt` already done):
 #
 #     python -m PyInstaller TicketAssignment_windows.spec
 #
-# Output: dist\Ticket Assignment.exe (this one file is the whole app --
-# copy just it to another machine, nothing else required)
+# Output: dist\Ticket Assignment\ -- the launcher .exe plus the
+# _internal folder it needs beside it. Deploy with install.ps1, which
+# copies that folder somewhere per-user and makes a Start Menu shortcut,
+# so nobody has to see _internal.
+#
+# This is "onedir" rather than PyInstaller's single-file mode on purpose:
+# onefile re-extracts the whole bundle to a temp directory on every
+# launch, which measured ~1.9s to first window versus ~0.46s here.
 
 # -*- mode: python ; coding: utf-8 -*-
 
@@ -53,26 +58,19 @@ a = Analysis(
 
 pyz = PYZ(a.pure)
 
-# Onefile mode: a.binaries/a.datas go directly into EXE() (and there's no
-# separate COLLECT() step) instead of being left out via
-# exclude_binaries=True -- that's what makes this build one single .exe
-# instead of an .exe next to an _internal folder it depends on. At launch,
-# the bootloader unpacks everything to a temp dir (cleaned up afterward)
-# and runs from there -- a small one-time-per-launch cost (usually well
-# under a second) in exchange for true single-file portability.
+# exclude_binaries=True keeps the binaries/datas out of the .exe so
+# COLLECT below can lay them out in _internal\ beside it -- nothing is
+# unpacked at launch, which is where the startup win comes from.
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,
     name='Ticket Assignment',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    upx_exclude=[],
-    runtime_tmpdir=None,
     console=False,  # windowed app, no terminal window
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -80,4 +78,14 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=None,  # drop an .ico file next to this spec and point this at it for a real icon
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name='Ticket Assignment',
 )

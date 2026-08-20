@@ -46,7 +46,8 @@ at once. Runs on Windows and macOS.
 | `schema.sql` | The table definitions. Idempotent; `db.py` can also apply it for you. |
 | `merge_locations.sql` | One-off administrative script for merging two locations into one. |
 | `migrate_json_to_sql.py` | One-time importer for data from the older JSON-file version. |
-| `TicketAssignment_windows.spec` | PyInstaller spec for building a Windows `.exe`. |
+| `TicketAssignment_windows.spec` | PyInstaller spec for building the Windows app. |
+| `install.ps1` | Per-user Windows installer/updater — copies the build and makes a Start Menu shortcut. |
 | `TicketAssignment_mac.spec` | PyInstaller spec for building a macOS `.app` bundle. |
 
 The database has five tables: `Locations`, `Names` (one row per person per
@@ -279,7 +280,29 @@ pip install -r requirements.txt
 python -m PyInstaller TicketAssignment_windows.spec
 ```
 
-Output: `dist\Ticket Assignment.exe` — a single file, copy it anywhere.
+Output: `dist\Ticket Assignment\` — the launcher `.exe` plus an
+`_internal\` folder it needs beside it. Both have to travel together.
+
+Then install it for the current user:
+
+```powershell
+.\install.ps1            # add -Desktop for a desktop shortcut too
+```
+
+That copies the build to `%LOCALAPPDATA%\Programs\Ticket Assignment` and
+creates a Start Menu shortcut, so users launch it like any other app and
+never see `_internal\`. It's per-user, so **no administrator rights are
+needed**. Re-running it updates an existing install and preserves that
+machine's `config.ini` (database connection, dark mode, last location).
+`.\install.ps1 -Uninstall` removes it again, backing the config up first.
+
+To deploy to other machines, copy the `dist\Ticket Assignment` folder and
+`install.ps1` to each one (a network share works well) and run the script
+there.
+
+This build is deliberately *not* PyInstaller's single-file mode. Onefile
+re-extracts the entire bundle to a temp directory on every launch, which
+measured **~1.9s to first window versus ~0.46s** for this layout.
 
 ### macOS
 
