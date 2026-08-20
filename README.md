@@ -281,7 +281,8 @@ python -m PyInstaller TicketAssignment_windows.spec
 ```
 
 Output: `dist\Ticket Assignment\` — the launcher `.exe` plus an
-`_internal\` folder it needs beside it. Both have to travel together.
+`_internal\` folder it needs beside it (~19 MB total). Both have to
+travel together.
 
 Then install it for the current user:
 
@@ -316,6 +317,11 @@ python3 -m PyInstaller TicketAssignment_mac.spec
 Output: `dist/Ticket Assignment.app`. Run from source first
 (`python3 name_selector.py`) and confirm it works end to end before
 packaging — easier to debug than a built app.
+
+The macOS spec trims the same unused Tcl/Tk support data as the Windows
+one (timezone tables, locale message catalogs, sample images) plus a few
+never-imported stdlib modules. Unlike Windows, it deliberately keeps
+`ssl`/`_ssl`, because `pyspnego` needs them for NTLM domain login.
 
 **Opening it the first time**: since this isn't signed with an Apple
 Developer ID, macOS Gatekeeper will refuse to open it normally ("cannot be

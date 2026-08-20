@@ -63,8 +63,34 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
+    excludes=[
+        # Never imported here: verified against pytds and pyspnego, the
+        # two macOS-specific dependencies, as well as the app itself.
+        # unicodedata is Python's Unicode table and is unrelated to Tk's
+        # own Unicode handling, so dropping it doesn't affect rendering.
+        'unicodedata', '_zstd', 'lzma', '_lzma', 'bz2', '_bz2',
+        # NOTE: unlike the Windows spec, ssl/_ssl and _hashlib are NOT
+        # excluded here. pyspnego (NTLM domain login) imports ssl, so
+        # removing it would break domain authentication on macOS.
+    ],
     noarchive=False,
 )
+
+# Same unused Tcl/Tk support data the Windows spec drops -- this is
+# Tcl/Tk's own payload, so it's identical on both platforms:
+#   tzdata  -- Tcl's timezone database (hundreds of files). Only Tcl's
+#              `clock` command uses it; all dates here are Python's.
+#   msgs    -- localised message catalogs for Tcl/Tk's built-in dialogs.
+#   images  -- Tk's bundled sample images.
+#
+# The `encoding` directory is deliberately KEPT: Tcl needs it to render
+# non-ASCII text, and names can contain accented characters.
+def _is_unused_tcl_data(entry):
+    dest = entry[1].replace("\\", "/")
+    return "/tzdata" in dest or "/msgs" in dest or "_tk_data/images" in dest
+
+
+a.datas = [d for d in a.datas if not _is_unused_tcl_data(d)]
 
 pyz = PYZ(a.pure)
 

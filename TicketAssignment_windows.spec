@@ -52,9 +52,46 @@ a = Analysis(
         # it somehow ended up installed anyway, to keep it out of the
         # bundle.
         'pytds',
+        # OpenSSL, ~6MB of libcrypto-3.dll + libssl-3.dll, pulled in by
+        # these two C extensions. Nothing on Windows needs it: pyodbc
+        # talks to SQL Server through the ODBC driver, which does its own
+        # TLS via Schannel, and the app makes no other network calls.
+        #
+        # Excluding the '_hashlib' C module (NOT the 'hashlib' wrapper,
+        # which pyodbc does import and which falls back to Python's
+        # built-in hash implementations) is what actually drops the DLLs.
+        # Both it and _ssl must go, since either one alone keeps them.
+        #
+        # Do NOT copy the ssl/_ssl exclusion to the macOS spec: pyspnego
+        # (NTLM domain login) imports ssl. python-tds itself does not --
+        # it uses pyOpenSSL, and only when a cafile is supplied, which
+        # db.py never does.
+        '_hashlib', 'ssl', '_ssl',
+        # Never imported by this app: verified by running it end to end
+        # (connect, load, status dialog, save) and checking sys.modules.
+        # unicodedata is Python's table, unrelated to Tk's own Unicode
+        # handling, so removing it doesn't affect rendering.
+        'unicodedata', '_zstd', 'lzma', '_lzma', 'bz2', '_bz2',
     ],
     noarchive=False,
 )
+
+# Tcl/Tk ships support data this app never touches:
+#   tzdata   -- Tcl's own timezone database (609 files). Only used by
+#               Tcl's `clock` command; all date handling here is Python's.
+#   msgs     -- localised message catalogs for Tcl/Tk's own dialogs.
+#               English-only app.
+#   images   -- Tk's bundled sample/demo images.
+#
+# The `encoding` directory is deliberately KEPT: Tcl needs it to render
+# non-ASCII text, and team member names can legitimately contain accented
+# characters.
+def _is_unused_tcl_data(entry):
+    dest = entry[1].replace("\\", "/")
+    return "/tzdata" in dest or "/msgs" in dest or "_tk_data/images" in dest
+
+
+a.datas = [d for d in a.datas if not _is_unused_tcl_data(d)]
 
 pyz = PYZ(a.pure)
 
