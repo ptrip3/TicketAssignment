@@ -1,9 +1,12 @@
 # PyInstaller spec for the Windows build.
 #
-# Usage (from PowerShell, in this directory, inside a venv with
+# Usage (from PowerShell at the project root, inside a venv with
 # `pip install -r requirements.txt` already done):
 #
-#     python -m PyInstaller TicketAssignment_windows.spec
+#     python -m PyInstaller packaging\TicketAssignment_windows.spec
+#
+# Output always goes to the project root, whichever directory you run it
+# from -- see the CONF overrides below.
 #
 # Output: dist\Ticket Assignment\ -- the launcher .exe plus the
 # _internal folder it needs beside it. Deploy with install.ps1, which
@@ -16,11 +19,45 @@
 
 # -*- mode: python ; coding: utf-8 -*-
 
+import os
+
+from PyInstaller.config import CONF
 from PyInstaller.utils.hooks import collect_data_files
 
+# Paths are resolved from this spec's own location (SPECPATH, injected by
+# PyInstaller) rather than the current directory, so the build works the
+# same wherever it's invoked from.
+ROOT = os.path.dirname(SPECPATH)
+SRC = os.path.join(ROOT, "src")
+
+# The app as users see it, versus the build folder it's delivered in. The
+# two specs write to differently-named folders so a Windows build and a
+# macOS build can coexist under dist/ without overwriting each other; the
+# executable inside keeps the plain product name either way.
+APP_NAME = "Ticket Assignment"
+BUILD_NAME = "Ticket Assignment Windows"
+
+# Send build/ and dist/ to the project root rather than the current
+# directory, which is where PyInstaller puts them by default -- so running
+# this spec from inside packaging/ doesn't scatter output in there.
+# COLLECT and EXE read these from CONF, which is what makes the redirect
+# take effect.
+CONF["distpath"] = os.path.join(ROOT, "dist")
+CONF["workpath"] = os.path.join(ROOT, "build")
+# PyInstaller creates its work directory before evaluating this spec, so
+# the redirected one doesn't exist yet.
+os.makedirs(CONF["workpath"], exist_ok=True)
+DISTPATH = CONF["distpath"]
+
+# Note: PyInstaller writes two analysis reports (warn-*.txt, xref-*.html)
+# using the path it resolved before this spec ran, so building from a
+# directory other than the project root still leaves those two files
+# behind there. Everything that matters -- the app itself and all build
+# artifacts -- lands at the project root regardless.
+
 a = Analysis(
-    ['name_selector.py'],
-    pathex=[],
+    [os.path.join(SRC, "name_selector.py")],
+    pathex=[SRC],
     binaries=[],
     # schema.sql is read at runtime (db.py's ensure_schema()); bundling it
     # here is what makes db.py's sys._MEIPASS-based path resolution work
@@ -31,7 +68,7 @@ a = Analysis(
     # import analysis can't discover on its own -- collect_data_files()
     # bundles those explicitly. Without this the app would still launch,
     # just silently fall back to the default Tk look with no error.
-    datas=[('schema.sql', '.')] + collect_data_files('sv_ttk'),
+    datas=[(os.path.join(SRC, "schema.sql"), ".")] + collect_data_files('sv_ttk'),
     hiddenimports=[
         # pyodbc is a C-extension module; PyInstaller's static analysis
         # should find it automatically via name_selector.py -> db.py's
@@ -108,7 +145,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='Ticket Assignment',
+    name=APP_NAME,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -129,5 +166,19 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='Ticket Assignment',
+    name=BUILD_NAME,
+)
+
+# Ship the installer inside the build folder, so the thing you copy to
+# another machine is self-contained: the app plus the script that
+# installs it. install.ps1 notices when it's sitting next to the .exe and
+# installs from its own directory (see its SourcePath handling).
+#
+# COLLECT would put a `datas` entry under _internal/, which is not where
+# anyone would look for it, so it's copied to the top level here instead.
+import shutil
+
+shutil.copy2(
+    os.path.join(SPECPATH, "install.ps1"),
+    os.path.join(DISTPATH, BUILD_NAME, "install.ps1"),
 )

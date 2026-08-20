@@ -14,8 +14,10 @@
     database connection details live, so reinstalling must not reset it.
 
 .PARAMETER SourcePath
-    The built folder to install from. Defaults to "dist\Ticket Assignment"
-    beside this script, i.e. what PyInstaller just produced.
+    The built folder to install from. Defaults to whichever makes sense:
+    this script's own folder when it sits next to Ticket Assignment.exe
+    (that is, inside a copied build), otherwise the repo's
+    dist\Ticket Assignment Windows produced by PyInstaller.
 
 .PARAMETER Desktop
     Also create a desktop shortcut.
@@ -37,7 +39,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$AppName      = 'Ticket Assignment'
+$AppName      = 'Ticket Assignment'          # the .exe, shortcut and install folder
+$BuildName    = 'Ticket Assignment Windows'  # what the spec names the build folder
 $InstallRoot  = Join-Path $env:LOCALAPPDATA 'Programs'
 $InstallDir   = Join-Path $InstallRoot $AppName
 $ExePath      = Join-Path $InstallDir "$AppName.exe"
@@ -87,7 +90,15 @@ if ($Uninstall) {
 # ---- install / update ----------------------------------------------------
 
 if (-not $SourcePath) {
-    $SourcePath = Join-Path $PSScriptRoot "dist\$AppName"
+    # This script ships inside the build folder as well as living in the
+    # repo, so work out which situation we're in.
+    if (Test-Path (Join-Path $PSScriptRoot "$AppName.exe")) {
+        # Sitting next to the app: install from this folder.
+        $SourcePath = $PSScriptRoot
+    } else {
+        # In the repo (packaging\): use the PyInstaller output.
+        $SourcePath = Join-Path (Split-Path $PSScriptRoot -Parent) "dist\$BuildName"
+    }
 }
 if (-not (Test-Path $SourcePath)) {
     throw "Build not found at '$SourcePath'. Run this first:`n" +
@@ -114,6 +125,8 @@ if (Test-Path $InstallDir) {
 }
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 Copy-Item (Join-Path $SourcePath '*') $InstallDir -Recurse -Force
+# The installed copy keeps its own install.ps1 (handy for -Uninstall from
+# the installed location), but never a stale config.ini from the build.
 Write-Host "Installed to: $InstallDir"
 
 if ($savedConfig) {

@@ -37,18 +37,25 @@ at once. Runs on Windows and macOS.
 
 ## Architecture
 
-| File | Purpose |
-|---|---|
-| `name_selector.py` | The Tkinter app itself (UI + in-memory state). |
-| `models.py` | `Status` / `StatusDuration` — shared domain types. |
-| `datepicker.py` | Calendar date-picker widgets, built directly on tkinter. |
-| `db.py` | All SQL Server access (`Database` class) — connections, schema setup, load/save. Dual-backend, see below. |
-| `schema.sql` | The table definitions. Idempotent; `db.py` can also apply it for you. |
-| `merge_locations.sql` | One-off administrative script for merging two locations into one. |
-| `migrate_json_to_sql.py` | One-time importer for data from the older JSON-file version. |
-| `TicketAssignment_windows.spec` | PyInstaller spec for building the Windows app. |
-| `install.ps1` | Per-user Windows installer/updater — copies the build and makes a Start Menu shortcut. |
-| `TicketAssignment_mac.spec` | PyInstaller spec for building a macOS `.app` bundle. |
+```
+src/          the application
+  name_selector.py   Tkinter app (UI + in-memory state)
+  db.py              all SQL Server access; dual-backend, see below
+  models.py          Status / StatusDuration domain types
+  datepicker.py      calendar date-picker widgets, built on tkinter
+  schema.sql         table definitions; loaded at runtime by db.py
+packaging/    building and deploying
+  TicketAssignment_windows.spec   PyInstaller spec for the Windows build
+  TicketAssignment_mac.spec       PyInstaller spec for the macOS .app
+  install.ps1                     per-user Windows installer/updater
+tools/        one-off admin scripts
+  migrate_json_to_sql.py   importer for the older JSON-file version
+  merge_locations.sql      merges two locations into one
+```
+
+`schema.sql` lives beside `db.py` rather than in `tools/` because it's a
+runtime resource: `db.py` reads it to create missing tables, and it's
+bundled into the built app.
 
 The database has five tables: `Locations`, `Names` (one row per person per
 location, with a `QueuePosition` that encodes round-robin order),
@@ -105,7 +112,7 @@ of the app doesn't know or care which one is active.
 Everything else that differs by platform:
 
 - **Fonts**: the UI asks Tk for `TkDefaultFont`'s actual family (`_font()`
-  in `name_selector.py`), which Tk resolves to the right native font per
+  in `src/name_selector.py`), which Tk resolves to the right native font per
   platform — no per-platform font name guessing.
 - **config.ini location**: Windows keeps it next to the script/`.exe`.
   macOS uses `~/Library/Application Support/Ticket Assignment/config.ini`
@@ -185,8 +192,8 @@ Kerberos and NTLM). TCP/IP-on-a-known-port still applies.
 ## Running it
 
 ```bash
-python name_selector.py        # Windows
-python3 name_selector.py       # macOS
+python src\name_selector.py     # Windows
+python3 src/name_selector.py      # macOS
 ```
 
 On first run, a dialog asks for your SQL Server connection details.
@@ -206,7 +213,7 @@ it first), run `schema.sql` against your target database directly — it's
 idempotent, safe to run more than once:
 
 ```powershell
-sqlcmd -S YOURSERVER\INSTANCE -d TicketAssignment -i schema.sql
+sqlcmd -S YOURSERVER\INSTANCE -d TicketAssignment -i src\schema.sql
 ```
 
 Then point `config.ini` (or the first-run dialog) at that server and
@@ -214,7 +221,7 @@ database.
 
 ### Merging two locations
 
-If two locations need to be consolidated into one, `merge_locations.sql`
+If two locations need to be consolidated into one, `tools/merge_locations.sql`
 does it in a single transaction: fill in the two location names at the top
 and run it against the database. It refuses to run if the same person
 exists in both locations, so those can be resolved by hand first. Back up
@@ -227,13 +234,13 @@ network drive. If you have an existing `ticket_assignment_data.json`,
 import it once with:
 
 ```bash
-python migrate_json_to_sql.py --json-file "\\shared\drive\ticket_assignment_data.json"
+python tools/migrate_json_to_sql.py --json-file "\\shared\drive\ticket_assignment_data.json"
 ```
 
 By default it reads connection info from `config.ini` next to the script;
 pass `--server`/`--database` (and `--uid`/`--pwd` for SQL auth) to target a
 different database. Use `--dry-run` first to preview what would be
-imported without writing anything. See `python migrate_json_to_sql.py --help`
+imported without writing anything. See `python tools/migrate_json_to_sql.py --help`
 for all options.
 
 ## Building standalone apps
@@ -248,17 +255,23 @@ platform.
 python -m venv build-env
 build-env\Scripts\activate
 pip install -r requirements.txt
-python -m PyInstaller TicketAssignment_windows.spec
+python -m PyInstaller packaging\TicketAssignment_windows.spec
 ```
 
-Output: `dist\Ticket Assignment\` — the launcher `.exe` plus an
+Output: `dist\Ticket Assignment Windows\` — the launcher `.exe` plus an
 `_internal\` folder it needs beside it (~19 MB total). Both have to
 travel together.
+
+`build/` and `dist/` always land at the project root, whichever
+directory you run the build from. Each spec writes to its own folder
+(`Ticket Assignment Windows` / `Ticket Assignment macOS`), so builds for
+the two platforms can sit side by side without overwriting each other.
+The `.exe` and `.app` inside keep the plain product name.
 
 Then install it for the current user:
 
 ```powershell
-.\install.ps1            # add -Desktop for a desktop shortcut too
+.\packaging\install.ps1            # add -Desktop for a desktop shortcut too
 ```
 
 That copies the build to `%LOCALAPPDATA%\Programs\Ticket Assignment` and
@@ -266,11 +279,15 @@ creates a Start Menu shortcut, so users launch it like any other app and
 never see `_internal\`. It's per-user, so **no administrator rights are
 needed**. Re-running it updates an existing install and preserves that
 machine's `config.ini` (database connection, dark mode, last location).
-`.\install.ps1 -Uninstall` removes it again, backing the config up first.
+`.\packaging\install.ps1 -Uninstall` removes it again, backing the config
+up first.
 
-To deploy to other machines, copy the `dist\Ticket Assignment` folder and
-`install.ps1` to each one (a network share works well) and run the script
-there.
+`install.ps1` is also copied into the build folder, so
+`dist\Ticket Assignment Windows` is self-contained: to deploy to other
+machines,
+copy that one folder (a network share works well) and run the
+`install.ps1` inside it. The installed copy keeps its own `install.ps1`,
+so `-Uninstall` works from there too.
 
 This build is deliberately *not* PyInstaller's single-file mode. Onefile
 re-extracts the entire bundle to a temp directory on every launch, which
@@ -282,11 +299,13 @@ measured **~1.9s to first window versus ~0.46s** for this layout.
 python3 -m venv build-env
 source build-env/bin/activate
 pip install -r requirements.txt
-python3 -m PyInstaller TicketAssignment_mac.spec
+python3 -m PyInstaller packaging/TicketAssignment_mac.spec
 ```
 
-Output: `dist/Ticket Assignment.app`. Run from source first
-(`python3 name_selector.py`) and confirm it works end to end before
+Output: `dist/Ticket Assignment.app` (alongside an intermediate
+`dist/Ticket Assignment macOS/` folder PyInstaller builds it from). Run
+from source first
+(`python3 src/name_selector.py`) and confirm it works end to end before
 packaging — easier to debug than a built app.
 
 The macOS spec trims the same unused Tcl/Tk support data as the Windows
@@ -308,7 +327,7 @@ This is a one-time step per machine.
 - The background refresh thread polls the database every 0.5s per open
   client. Fine for a small team; if that ever becomes a concern on your
   server, the interval is a single `time.sleep(0.5)` in
-  `_start_data_refresh()` in `name_selector.py`.
+  `_start_data_refresh()` in `src/name_selector.py`.
 - Connection details, including any SQL Server or domain password, are
   stored in plain text in `config.ini` on each client machine. On Windows,
   using Windows Authentication avoids storing a password at all; on macOS

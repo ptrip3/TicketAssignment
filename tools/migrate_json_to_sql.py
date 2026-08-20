@@ -29,8 +29,12 @@ import os
 import sys
 from datetime import date
 
-from db import Database, DatabaseError, STATUS_TYPES
-from models import StatusDuration
+# The app's modules live in src/ alongside this repo's other code; this
+# script sits in tools/, so make them importable.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "src"))
+
+from db import Database, DatabaseError, STATUS_TYPES  # noqa: E402
+from models import StatusDuration  # noqa: E402
 
 
 def load_json_locations(json_path):
@@ -68,7 +72,9 @@ def build_database_from_args(args):
             pwd=args.pwd,
         )
 
-    config_path = args.config or os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.ini")
+    config_path = args.config or os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), os.pardir, "src", "config.ini"
+    )
     if not os.path.exists(config_path):
         print(f"No config.ini found at {config_path} and no --server/--database given.", file=sys.stderr)
         sys.exit(2)
