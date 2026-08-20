@@ -46,19 +46,8 @@ a = Analysis(
         # -- listed explicitly since it's only ever imported lazily, deep
         # inside pytds.login.SpnegoAuth, not at module level anywhere
         # PyInstaller's analyzer would trivially see it. Should be
-        # installed in every build venv per requirements.txt, unlike
-        # pyodbc below.
+        # installed in every build venv per requirements.txt.
         'spnego',
-        # pyodbc is optional here (unlike on Windows, where it's required)
-        # -- it's how macOS Domain Authentication (Kerberos) works, see
-        # README's "Domain Authentication (Kerberos) on macOS" section.
-        # Most Macs won't have it installed, which is fine: an unresolved
-        # hiddenimport is just a build-time warning, not a failure, and
-        # the app already handles pyodbc being unimportable at runtime
-        # (falls back to pytds/SQL login -- see the top of
-        # name_selector.py). If you *did* set up Kerberos support in this
-        # build's venv, this is what makes sure it actually gets bundled.
-        'pyodbc',
     ],
     hookspath=[],
     hooksconfig={},
@@ -66,9 +55,18 @@ a = Analysis(
     excludes=[
         # Never imported here: verified against pytds and pyspnego, the
         # two macOS-specific dependencies, as well as the app itself.
-        # unicodedata is Python's Unicode table and is unrelated to Tk's
-        # own Unicode handling, so dropping it doesn't affect rendering.
-        'unicodedata', '_zstd', 'lzma', '_lzma', 'bz2', '_bz2',
+        '_zstd', 'lzma', '_lzma', 'bz2', '_bz2',
+        # NOTE: do not add 'unicodedata' here. It looks unused -- nothing
+        # imports it directly and it never shows up in sys.modules -- but
+        # Python's IDNA codec (encodings/idna.py) does `from unicodedata
+        # import ucd_3_2_0`, and socket.getaddrinfo() encodes every
+        # hostname through that codec. Excluding it produces
+        # "LookupError: unknown encoding: idna" on any hostname
+        # connection.
+        # macOS connects only via python-tds (SQL Server login or NTLM),
+        # so pyodbc is never used here even if it happens to be installed
+        # in the build venv.
+        'pyodbc',
         # NOTE: unlike the Windows spec, ssl/_ssl and _hashlib are NOT
         # excluded here. pyspnego (NTLM domain login) imports ssl, so
         # removing it would break domain authentication on macOS.

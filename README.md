@@ -81,15 +81,14 @@ one location means saving one can't clobber concurrent edits to another.
   is frequently disabled) — so it asks for an explicit host and TCP port.
 - **macOS: `python-tds` + NTLM, optionally**, for domain-joined Macs — lets
   users authenticate with their own domain username/password instead of a
-  SQL Server login. Needs nothing but `pyspnego` (already in
+  shared SQL Server login. Needs nothing but `pyspnego` (already in
   `requirements.txt` for non-Windows platforms): pure Python, no system
-  driver, no Homebrew. The cost versus Kerberos is that it's a typed
-  password rather than silent single sign-on.
-- **macOS: `pyodbc`, optionally**, for domain-joined Macs that can get a
-  Kerberos ticket — true single sign-on, no password prompt, the same way
-  Windows clients work. Costs more to set up than NTLM: needs Microsoft's
-  ODBC driver installed via Homebrew, which some organizations don't
-  allow. See [Domain authentication on macOS](#domain-authentication-on-macos).
+  driver, no Homebrew. See
+  [Domain authentication on macOS](#domain-authentication-on-macos).
+
+macOS connects through `python-tds` only — a SQL Server login or NTLM.
+There is deliberately no ODBC/Kerberos path there, so nothing has to be
+installed on a Mac beyond the app itself.
 
 **The SQL Server itself needs TCP/IP enabled** (not just Named
 Pipes/Shared Memory, which is all a default SQL Server Express install
@@ -118,23 +117,18 @@ Everything else that differs by platform:
   drawn by Win32 and can't be themed for dark mode; using an in-window
   toolbar on both platforms keeps the app consistent and dark-mode
   correct. See `_create_menu()`.
-- **Connection dialog**: on macOS it shows Server/Port/Database/SQL
-  Login/Password by default (no ODBC driver picker, no Authentication
-  chooser, since neither applies to plain `python-tds`). If `pyspnego`
-  and/or `pyodbc` are importable, an "Authentication:" chooser appears
-  with up to three options — **SQL Server Login** (always), **Domain Login
-  (NTLM)** (if `pyspnego` is present), and **Domain Login (Kerberos)** (if
-  `pyodbc` is present). Kerberos swaps Port for an ODBC Driver picker and
-  disables SQL Login/Password, mirroring the Windows dialog's "Use Windows
-  Authentication" checkbox; NTLM keeps Port and the login fields (with the
-  username field relabeled "Domain Username").
+- **Connection dialog**: Windows shows an ODBC Driver picker and a "Use
+  Windows Authentication" checkbox. macOS shows a Port field instead (no
+  driver concept in `python-tds`) and, when `pyspnego` is importable, an
+  "Authentication:" chooser with two options — **SQL Server Login** and
+  **Domain Login (NTLM)**. Both take a username and password; picking
+  NTLM just relabels the username field to "Domain Username" and reminds
+  you the `DOMAIN\username` prefix is required.
 
 ### Domain authentication on macOS
 
 Optional, for domain-joined Macs where users should authenticate as
-themselves rather than through a shared SQL Server login. Two options:
-
-#### NTLM (no Homebrew, no ODBC driver)
+themselves rather than through a shared SQL Server login.
 
 `pyspnego` is already part of `requirements.txt` for non-Windows
 platforms, so there's normally nothing extra to install. To confirm:
@@ -161,29 +155,6 @@ already authenticate with Windows Authentication, NTLM is already enabled
 (it's part of the same Windows Authentication mode, which covers both
 Kerberos and NTLM). TCP/IP-on-a-known-port still applies.
 
-#### Kerberos (single sign-on, needs Homebrew)
-
-1. Install Microsoft's ODBC driver and `pyodbc` (deliberately not part of
-   `requirements.txt` — see the comment there for why):
-   ```bash
-   brew install unixodbc
-   brew tap microsoft/mssql-release https://github.com/Microsoft/homebrew-mssql-release
-   brew install msodbcsql17 mssql-tools
-   pip install pyodbc
-   ```
-2. Confirm a valid Kerberos ticket for the domain (domain-joined Macs
-   often obtain one automatically at login; if not):
-   ```bash
-   kinit yourusername@YOURDOMAIN.COM   # realm is conventionally uppercase
-   klist                               # confirm a ticket is present
-   ```
-3. Launch the app (or **File → Change Database Connection**), choose
-   **Domain Login (Kerberos)**, pick the ODBC driver, fill in
-   Server/Database, and Test Connection.
-
-If it fails, `kinit`/`klist` are the first things to check — a missing or
-expired ticket is the most likely cause.
-
 ## Requirements
 
 ### Windows
@@ -201,8 +172,8 @@ expired ticket is the most likely cause.
   include Tk; some minimal installs don't — if `python3 -m tkinter` opens
   a small test window, you're fine) and `python-tds` (see
   [requirements.txt](requirements.txt)).
-- Nothing else — no Homebrew ODBC packages, no Microsoft driver install,
-  unless you specifically want the Kerberos option above.
+- Nothing else — no Homebrew, no ODBC packages, no Microsoft driver
+  install. That's the point of the `python-tds` backend.
 
 ### Both platforms
 - A SQL Server database everyone on the team can reach (SQL Server 2017 or
@@ -339,9 +310,9 @@ This is a one-time step per machine.
   server, the interval is a single `time.sleep(0.5)` in
   `_start_data_refresh()` in `name_selector.py`.
 - Connection details, including any SQL Server or domain password, are
-  stored in plain text in `config.ini` on each client machine. Use
-  Windows Integrated Auth or Kerberos where possible to avoid storing a
-  password at all.
+  stored in plain text in `config.ini` on each client machine. On Windows,
+  using Windows Authentication avoids storing a password at all; on macOS
+  both available modes require one.
 - No app icon is set (both `.spec` files have `icon=None`) — drop an
   `.ico`/`.icns` file next to the spec and point `icon` at it if you want
   one.

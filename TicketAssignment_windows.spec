@@ -69,9 +69,14 @@ a = Analysis(
         '_hashlib', 'ssl', '_ssl',
         # Never imported by this app: verified by running it end to end
         # (connect, load, status dialog, save) and checking sys.modules.
-        # unicodedata is Python's table, unrelated to Tk's own Unicode
-        # handling, so removing it doesn't affect rendering.
-        'unicodedata', '_zstd', 'lzma', '_lzma', 'bz2', '_bz2',
+        '_zstd', 'lzma', '_lzma', 'bz2', '_bz2',
+        # NOTE: do not add 'unicodedata' here. It looks unused -- nothing
+        # imports it directly and it never shows up in sys.modules -- but
+        # Python's IDNA codec (encodings/idna.py) does `from unicodedata
+        # import ucd_3_2_0`, and socket.getaddrinfo() encodes every
+        # hostname through that codec. Excluding it produces
+        # "LookupError: unknown encoding: idna" on any hostname
+        # connection.
     ],
     noarchive=False,
 )

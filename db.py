@@ -13,10 +13,11 @@ Two backends, chosen automatically by platform (override with the
   - "pytds" (everywhere else, in particular macOS): python-tds is a pure
     Python TDS-protocol client with no system driver to install, which
     matters for a double-click-and-run app bundle -- it avoids requiring
-    Homebrew + Microsoft's ODBC driver on every client. By default it
-    connects with a SQL Server login (username/password); it can also do
+    Homebrew + Microsoft's ODBC driver on every client. It connects
+    either with a SQL Server login (username/password) or with
     NTLM domain authentication when pyspnego is installed (see
-    _pytds_ntlm_auth). It cannot resolve `host\\instance`-style
+    _pytds_ntlm_auth); those are the only two options on macOS. It
+    cannot resolve `host\\instance`-style
     named-instance addresses via the SQL Browser service the way pyodbc
     can (that requires SQL Browser to be running and UDP 1434 reachable,
     which is often disabled) -- so it needs an explicit host and TCP port,
@@ -167,12 +168,10 @@ class Database:
         self.driver = driver or DEFAULT_PYODBC_DRIVER  # pyodbc only
         self.port = port  # pytds only
         # "Authenticate as a domain identity instead of a SQL Server
-        # login" -- for pyodbc this means silent Windows/Kerberos
-        # integrated auth (uid/pwd ignored); for pytds there's no
-        # cross-platform OS-level SSO to hook into, so it means NTLM
-        # using uid/pwd as the domain username/password instead of a SQL
-        # login (see _pytds_ntlm_auth()). Same intent, different
-        # mechanism per backend.
+        # login" -- for pyodbc this means Windows Integrated Auth, using
+        # the signed-in account (uid/pwd ignored); for pytds it means
+        # NTLM, using uid/pwd as the domain username/password (see
+        # _pytds_ntlm_auth). Same intent, different mechanism per backend.
         self.trusted_connection = trusted_connection
         self.uid = uid
         self.pwd = pwd
@@ -183,8 +182,8 @@ class Database:
                 import pyodbc
             except ImportError as e:
                 raise DatabaseError(
-                    "pyodbc isn't installed (pip install pyodbc). Required on Windows; on "
-                    "macOS/Linux it also needs a system ODBC driver -- see README."
+                    "pyodbc isn't installed (pip install pyodbc). It is the Windows backend; "
+                    "macOS/Linux use python-tds instead."
                 ) from e
             self._driver_module = pyodbc
         elif self.backend == "pytds":
@@ -285,14 +284,12 @@ class Database:
         """Build a pytds auth object for NTLM authentication -- lets
         macOS/Linux clients authenticate with their own domain username
         and password without needing Microsoft's ODBC driver installed
-        (unlike the pyodbc+Kerberos path this app also supports), just
-        the pure-Python `pyspnego` package (pip install pyspnego; no
-        system libraries, no Homebrew).
+        needing only the pure-Python `pyspnego` package (pip install
+        pyspnego; no system libraries, no Homebrew).
 
-        NTLM specifically, not "negotiate" (which would silently prefer
-        Kerberos when a ticket happens to be available): a mode that
+        NTLM specifically, not "negotiate", which would silently prefer
+        Kerberos when a ticket happens to be available: behaviour that
         depends on ambient ticket state makes failures harder to diagnose.
-        Use the pyodbc backend if you want Kerberos.
         """
         if not self.uid or not self.pwd:
             raise DatabaseError("NTLM authentication needs a domain username and password.")

@@ -37,13 +37,11 @@ def _try_optional_import(module_name, purpose):
         return None
 
 
-# Required on Windows (see requirements.txt). Optional everywhere else: a
-# macOS/Linux machine only has this if someone separately installed
-# Microsoft's ODBC driver + unixODBC and then `pip install pyodbc` -- see
-# README's "Domain Authentication on macOS" section. When it's not there,
-# pyodbc stays None and the connection dialog just doesn't offer that
-# option, falling back to pytds/SQL login.
-pyodbc = _try_optional_import("pyodbc", "Kerberos domain login")
+# Windows only: pyodbc is the backend there (see db.py), and this module
+# reference is just for listing the installed ODBC drivers in the
+# connection dialog. macOS/Linux use python-tds exclusively -- SQL Server
+# login or NTLM domain login -- so pyodbc is never loaded there.
+pyodbc = _try_optional_import("pyodbc", "ODBC driver list") if sys.platform == "win32" else None
 
 def _ntlm_available():
     """Whether NTLM domain login can be offered (pyspnego importable).
@@ -351,11 +349,9 @@ class TicketAssignmentApp:
                 "database": "",
                 # True is the sensible fresh-install default on Windows
                 # (Windows Auth just works there, no setup). On macOS it
-                # would silently pre-select NTLM or Kerberos in the
-                # connection dialog for a first-time user just because
-                # pyspnego/pyodbc happen to be pip-installed, even though
-                # nobody's actually set either up as a deliberate choice
-                # yet -- SQL login is the right zero-setup default there.
+                # would silently pre-select NTLM for a first-time user
+                # just because pyspnego happens to be installed, so SQL
+                # login is the right zero-setup default there.
                 "trusted_connection": "True" if sys.platform == "win32" else "False",
                 "uid": "",
                 "pwd": "",
@@ -423,15 +419,10 @@ class TicketAssignmentApp:
         on an already-running app.
         """
         is_windows = sys.platform == "win32"
-        # On Windows, pyodbc is a hard requirement so this is always True.
-        # Elsewhere (macOS), both of these are optional extras someone may
-        # or may not have set up (see README's "Domain Authentication"
-        # section): pyodbc needs Microsoft's ODBC driver + unixODBC
-        # installed via Homebrew; pyspnego (NTLM) just needs `pip install
-        # pyspnego`, no system driver at all. When neither is present,
-        # this dialog looks exactly like it did before either existed --
-        # plain Server/Port/Database/SQL Login/Password.
-        pyodbc_available = pyodbc is not None
+        # macOS/Linux offer a SQL Server login always, plus NTLM domain
+        # login when pyspnego is importable (it ships in requirements.txt,
+        # so normally it is). Windows keeps its own Windows Authentication
+        # checkbox instead.
         ntlm_available = _ntlm_available()
 
         dialog = tk.Toplevel(self.root)
@@ -474,20 +465,11 @@ class TicketAssignmentApp:
         ttk.Entry(dialog, textvariable=database_var, width=35).grid(row=row, column=1, sticky="ew", padx=15, pady=4)
         row += 1
 
-        # Driver picker (pyodbc/trusted-connection auth) and Port field
-        # (pytds/SQL login auth) occupy the same row slot -- on Windows
-        # only the driver picker is ever relevant; on macOS, whichever one
-        # applies depends on the Domain Authentication checkbox below, so
-        # both get built and _toggle_auth_fields() shows/hides between
-        # them instead of the row numbers shifting around.
-        backend_row = row
-        driver_frame = ttk.Frame(dialog)
-        driver_frame.grid(row=backend_row, column=0, columnspan=2, sticky="ew")
-        port_frame = ttk.Frame(dialog)
-        port_frame.grid(row=backend_row, column=0, columnspan=2, sticky="ew")
-        row += 1
-
-        if is_windows or pyodbc_available:
+        # Windows uses an ODBC driver; macOS/Linux use python-tds, which
+        # has no driver concept but needs an explicit port (it can't
+        # resolve named instances via SQL Browser, which is usually off).
+        # Only the one that applies is ever built.
+        if is_windows:
             try:
                 driver_names = sorted({d for d in pyodbc.drivers() if "SQL Server" in d})
             except Exception:
@@ -498,38 +480,35 @@ class TicketAssignmentApp:
             if current_driver not in driver_names:
                 driver_names.append(current_driver)
             driver_var = tk.StringVar(value=current_driver)
-            ttk.Label(driver_frame, text="ODBC Driver:").grid(row=0, column=0, sticky="w", padx=15, pady=4)
+            ttk.Label(dialog, text="ODBC Driver:").grid(row=row, column=0, sticky="w", padx=15, pady=4)
             ttk.Combobox(
-                driver_frame, textvariable=driver_var, values=driver_names, state="readonly", width=33
-            ).grid(row=0, column=1, sticky="ew", padx=15, pady=4)
+                dialog, textvariable=driver_var, values=driver_names, state="readonly", width=33
+            ).grid(row=row, column=1, sticky="ew", padx=15, pady=4)
+            row += 1
+            port_var = None
         else:
             driver_var = None
+            port_frame = ttk.Frame(dialog)
+            port_frame.grid(row=row, column=0, columnspan=2, sticky="ew")
+            row += 1
+            port_var = tk.StringVar(value=db_section.get("port", "") or str(db.DEFAULT_PORT))
+            ttk.Label(port_frame, text="Port:").grid(row=0, column=0, sticky="w", padx=15, pady=4)
+            ttk.Entry(port_frame, textvariable=port_var, width=10).grid(row=0, column=1, sticky="w", padx=15, pady=4)
+            ttk.Label(
+                port_frame,
+                text="The server needs TCP/IP enabled on this port. SQL Server Express often "
+                "only enables Named Pipes by default -- ask whoever manages the server to "
+                "confirm TCP/IP is turned on.",
+                font=_font(8), wraplength=380, justify="left",
+            ).grid(row=1, column=0, columnspan=2, sticky="w", padx=15)
 
-        # pytds (used whenever trusted/domain auth isn't) has no ODBC
-        # driver concept and can't reliably resolve named instances via
-        # SQL Browser (often disabled), so it needs an explicit port.
-        port_var = tk.StringVar(value=db_section.get("port", "") or str(db.DEFAULT_PORT))
-        ttk.Label(port_frame, text="Port:").grid(row=0, column=0, sticky="w", padx=15, pady=4)
-        ttk.Entry(port_frame, textvariable=port_var, width=10).grid(row=0, column=1, sticky="w", padx=15, pady=4)
-        ttk.Label(
-            port_frame,
-            text="The server needs TCP/IP enabled on this port. SQL Server Express often "
-            "only enables Named Pipes by default -- ask whoever manages the server to "
-            "confirm TCP/IP is turned on.",
-            font=_font(8), wraplength=380, justify="left",
-        ).grid(row=1, column=0, columnspan=2, sticky="w", padx=15)
-
-        # Windows: unchanged, a single "Windows Authentication" on/off
-        # checkbox, always pyodbc either way.
+        # Windows: a single "Windows Authentication" on/off checkbox,
+        # always pyodbc either way.
         #
-        # macOS: up to three modes, each a real, independently-usable
-        # authentication mechanism (see db.py): plain SQL Server login
-        # (pytds, the zero-install default); NTLM domain login (pytds +
-        # pyspnego, pip-only, no system driver); Kerberos domain login
-        # (pyodbc, needs Microsoft's ODBC driver via Homebrew). Only shown
-        # as a chooser at all if at least one of the two domain-login
-        # extras is actually available -- otherwise this looks exactly
-        # like it did before either existed.
+        # macOS/Linux: two modes over python-tds -- a plain SQL Server
+        # login, or NTLM domain login (adds pyspnego, which is pip-only,
+        # no system driver). The chooser only appears if pyspnego is
+        # importable; without it there's nothing to choose between.
         if is_windows:
             trusted_var = tk.BooleanVar(
                 value=str(db_section.get("trusted_connection", "True")).strip().lower() in ("1", "true", "yes")
@@ -537,55 +516,38 @@ class TicketAssignmentApp:
             auth_mode_var = None
         else:
             trusted_var = None
-            saved_backend = db_section.get("backend", "pytds")
             saved_trusted = str(db_section.get("trusted_connection", "False")).strip().lower() in ("1", "true", "yes")
-            if saved_trusted and saved_backend == "pyodbc" and pyodbc_available:
-                default_mode = "kerberos"
-            elif saved_trusted and saved_backend == "pytds" and ntlm_available:
-                default_mode = "ntlm"
-            else:
-                default_mode = "sql"
-            auth_mode_var = tk.StringVar(value=default_mode)
+            auth_mode_var = tk.StringVar(value="ntlm" if (saved_trusted and ntlm_available) else "sql")
 
         sql_login_label_var = tk.StringVar(value="SQL Login:")
         login_hint_var = tk.StringVar(value="")
 
         def _current_auth_mode():
+            """"windows" (trusted connection), "sql", or "ntlm"."""
             if is_windows:
-                return "kerberos" if trusted_var.get() else "sql"
+                return "windows" if trusted_var.get() else "sql"
             return auth_mode_var.get()
 
         def _toggle_auth_fields():
             mode = _current_auth_mode()
             if is_windows:
-                # Only pyodbc is ever used on Windows -- driver_frame always
-                # stays put, port_frame (pytds-only) never applies.
-                uid_entry.configure(state="disabled" if mode == "kerberos" else "normal")
-                pwd_entry.configure(state="disabled" if mode == "kerberos" else "normal")
-                port_frame.grid_remove()
-                driver_frame.grid()
+                # Windows Authentication uses the signed-in identity, so
+                # the login fields don't apply.
+                state = "disabled" if mode == "windows" else "normal"
+                uid_entry.configure(state=state)
+                pwd_entry.configure(state=state)
                 return
-            if mode == "kerberos":
-                uid_entry.configure(state="disabled")
-                pwd_entry.configure(state="disabled")
-                port_frame.grid_remove()
-                driver_frame.grid()
-                server_hint_var.set(instance_hint)
+            # macOS/Linux: both modes take a username and password; only
+            # the labelling differs.
+            if mode == "ntlm":
+                sql_login_label_var.set("Domain Username:")
+                login_hint_var.set(
+                    "Format: DOMAIN\\username (e.g. CONTOSO\\jsmith) -- the domain prefix is "
+                    "required, or SQL Server will reject it as an untrusted domain."
+                )
             else:
-                uid_entry.configure(state="normal")
-                pwd_entry.configure(state="normal")
-                driver_frame.grid_remove()
-                port_frame.grid()
-                server_hint_var.set(port_hint)
-                if mode == "ntlm":
-                    sql_login_label_var.set("Domain Username:")
-                    login_hint_var.set(
-                        "Format: DOMAIN\\username (e.g. CONTOSO\\jsmith) -- the domain prefix is "
-                        "required, or SQL Server will reject it as an untrusted domain."
-                    )
-                else:
-                    sql_login_label_var.set("SQL Login:")
-                    login_hint_var.set("")
+                sql_login_label_var.set("SQL Login:")
+                login_hint_var.set("")
 
         if is_windows:
             ttk.Checkbutton(
@@ -593,7 +555,7 @@ class TicketAssignmentApp:
                 variable=trusted_var, command=_toggle_auth_fields,
             ).grid(row=row, column=0, columnspan=2, sticky="w", padx=15, pady=(8, 4))
             row += 1
-        elif ntlm_available or pyodbc_available:
+        elif ntlm_available:
             ttk.Label(dialog, text="Authentication:", font=_font(9, "bold")).grid(
                 row=row, column=0, columnspan=2, sticky="w", padx=15, pady=(8, 0)
             )
@@ -602,24 +564,11 @@ class TicketAssignmentApp:
                 dialog, text="SQL Server Login", value="sql", variable=auth_mode_var, command=_toggle_auth_fields,
             ).grid(row=row, column=0, columnspan=2, sticky="w", padx=25, pady=2)
             row += 1
-            if ntlm_available:
-                ttk.Radiobutton(
-                    dialog, text="Domain Login (NTLM)", value="ntlm",
-                    variable=auth_mode_var, command=_toggle_auth_fields,
-                ).grid(row=row, column=0, columnspan=2, sticky="w", padx=25, pady=2)
-                row += 1
-            if pyodbc_available:
-                ttk.Radiobutton(
-                    dialog, text="Domain Login (Kerberos)", value="kerberos",
-                    variable=auth_mode_var, command=_toggle_auth_fields,
-                ).grid(row=row, column=0, columnspan=2, sticky="w", padx=25, pady=2)
-                row += 1
-                ttk.Label(
-                    dialog,
-                    text="Kerberos requires Microsoft's ODBC driver installed separately -- see README.",
-                    font=_font(8),
-                ).grid(row=row, column=0, columnspan=2, sticky="w", padx=45)
-                row += 1
+            ttk.Radiobutton(
+                dialog, text="Domain Login (NTLM)", value="ntlm",
+                variable=auth_mode_var, command=_toggle_auth_fields,
+            ).grid(row=row, column=0, columnspan=2, sticky="w", padx=25, pady=2)
+            row += 1
 
         ttk.Label(dialog, textvariable=sql_login_label_var).grid(row=row, column=0, sticky="w", padx=15, pady=4)
         uid_entry = ttk.Entry(dialog, textvariable=uid_var, width=35)
@@ -653,16 +602,6 @@ class TicketAssignmentApp:
                     pwd=pwd_var.get() or None,
                 )
             mode = _current_auth_mode()
-            if mode == "kerberos":
-                return Database(
-                    backend="pyodbc",
-                    driver=driver_var.get(),
-                    server=server_var.get().strip(),
-                    database=database_var.get().strip(),
-                    trusted_connection=True,
-                    uid=None,
-                    pwd=None,
-                )
             try:
                 port = int(port_var.get().strip() or db.DEFAULT_PORT)
             except ValueError:
@@ -686,13 +625,14 @@ class TicketAssignmentApp:
                 status_var.set("Server and Database are required.")
                 return False
             mode = _current_auth_mode()
-            needs_login = not is_windows and mode != "kerberos"
-            if needs_login and not (uid_var.get().strip() and pwd_var.get()):
+            # Windows Authentication is the only mode that doesn't take a
+            # username and password.
+            if mode != "windows" and not (uid_var.get().strip() and pwd_var.get()):
                 status_label.configure(foreground="red")
                 status_var.set(
                     "Domain username and password are required."
                     if mode == "ntlm"
-                    else "SQL Login and Password are required on this platform."
+                    else "SQL Login and Password are required."
                 )
                 return False
             return True

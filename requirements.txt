@@ -28,21 +28,10 @@ pyinstaller>=6.0
 # point of using it there (see db.py's module docstring).
 
 # Powers optional NTLM domain-login authentication on macOS/Linux (see
-# README.md's "Domain Authentication" section) -- lets techs authenticate
-# with their own domain username/password instead of a SQL Server login,
-# without needing Microsoft's ODBC driver or Homebrew at all. Pure Python
-# + the `cryptography` package (prebuilt wheels, no compiler needed), so
-# unlike the Kerberos path below there's no reason to make this a manual
-# extra step -- it's just always available, and the connection dialog
-# only offers it as a choice, never requires it.
+# README.md's "Domain authentication on macOS" section) -- lets users
+# authenticate with their own domain username/password instead of a SQL
+# Server login, with no system driver and no Homebrew. Pure Python + the
+# `cryptography` package (prebuilt wheels, no compiler needed), so it's
+# just always available; the connection dialog offers it as a choice and
+# never requires it.
 pyspnego>=0.10.0; sys_platform != "win32"
-
-# Optional, macOS only, NOT installed by this file: if you'd rather use
-# real Kerberos than NTLM above, it needs Microsoft's actual ODBC driver +
-# unixODBC present *before* pyodbc can even build, which most Macs won't
-# have -- install it separately once those are in place:
-#
-#     brew install unixodbc
-#     brew tap microsoft/mssql-release https://github.com/Microsoft/homebrew-mssql-release
-#     brew install msodbcsql17 mssql-tools
-#     pip install pyodbc
