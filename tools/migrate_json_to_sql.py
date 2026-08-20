@@ -7,8 +7,8 @@ and statuses aren't lost.
 Usage:
     python migrate_json_to_sql.py --json-file "\\\\shared\\drive\\ticket_assignment_data.json"
 
-By default this reads DB connection info from config.ini (the same file
-name_selector.py uses) next to this script. Override any of it on the
+By default this reads DB connection info from the same config.ini the
+app itself uses. Override any of it on the
 command line if you're migrating into a database config.ini doesn't point
 at yet:
 
@@ -72,9 +72,14 @@ def build_database_from_args(args):
             pwd=args.pwd,
         )
 
-    config_path = args.config or os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), os.pardir, "src", "config.ini"
-    )
+    if args.config:
+        config_path = args.config
+    else:
+        # Use whatever config.ini the app itself would read, rather than
+        # guessing a location -- see _get_config_dir in name_selector.
+        from name_selector import _get_config_dir
+
+        config_path = os.path.join(_get_config_dir(), "config.ini")
     if not os.path.exists(config_path):
         print(f"No config.ini found at {config_path} and no --server/--database given.", file=sys.stderr)
         sys.exit(2)

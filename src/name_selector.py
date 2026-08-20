@@ -6,6 +6,7 @@ import os
 import time
 from datetime import datetime, date, timedelta, time as dt_time
 from calendar import day_name
+import shutil
 import threading
 import configparser
 import sys
@@ -63,12 +64,22 @@ APP_DATE = "2026-08-18"
 APP_NAME = "Ticket Assignment"
 
 
+def _app_dir():
+    """The directory the running script or frozen executable lives in."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
 def _get_config_dir():
     """Directory to store config.ini in, appropriate for the platform.
 
-    Windows: next to the running script/exe, unchanged from earlier
-    versions -- this app has always been distributed as a single Windows
-    .exe with config.ini alongside it.
+    Windows: %APPDATA%/Ticket Assignment. Earlier versions kept it next
+    to the .exe, which only worked while the app was installed somewhere
+    the user could write. Installing to Program Files makes that
+    directory read-only for standard users, and settings are per-user
+    anyway, so they belong in the roaming profile. _migrate_legacy_config
+    moves an older config across on first run.
 
     macOS: ~/Library/Application Support/Ticket Assignment. Writing inside
     a signed .app bundle isn't reliable (code-signing expects the bundle's
@@ -79,13 +90,33 @@ def _get_config_dir():
     XDG Base Directory convention, for the same reason.
     """
     if sys.platform == "win32":
-        if getattr(sys, "frozen", False):
-            return os.path.dirname(sys.executable)
-        return os.path.dirname(os.path.abspath(__file__))
+        base = os.environ.get("APPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Roaming")
+        return os.path.join(base, APP_NAME)
     elif sys.platform == "darwin":
         return os.path.join(os.path.expanduser("~"), "Library", "Application Support", APP_NAME)
     else:
         return os.path.join(os.path.expanduser("~"), ".config", APP_NAME)
+
+
+def _migrate_legacy_config(config_file):
+    """Copy a pre-existing config.ini from beside the .exe, if there's
+    one there and none at the current location yet.
+
+    Windows builds used to keep config.ini next to the executable. Anyone
+    upgrading from one of those would otherwise be asked for their
+    database connection again.
+    """
+    if sys.platform != "win32" or os.path.exists(config_file):
+        return
+    legacy = os.path.join(_app_dir(), "config.ini")
+    if not os.path.exists(legacy):
+        return
+    try:
+        os.makedirs(os.path.dirname(config_file), exist_ok=True)
+        shutil.copyfile(legacy, config_file)
+        print(f"Migrated settings from {legacy} to {config_file}")
+    except OSError as e:
+        print(f"Could not migrate settings from {legacy}: {e}")
 
 
 _ui_font_family = None
@@ -331,6 +362,7 @@ class TicketAssignmentApp:
         """Load or create configuration file."""
         config = configparser.ConfigParser()
         config_file = os.path.join(_get_config_dir(), "config.ini")
+        _migrate_legacy_config(config_file)
         if os.path.exists(config_file):
             try:
                 config.read(config_file)

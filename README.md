@@ -114,7 +114,10 @@ Everything else that differs by platform:
 - **Fonts**: the UI asks Tk for `TkDefaultFont`'s actual family (`_font()`
   in `src/name_selector.py`), which Tk resolves to the right native font per
   platform — no per-platform font name guessing.
-- **config.ini location**: Windows keeps it next to the script/`.exe`.
+- **config.ini location**: Windows uses `%APPDATA%\Ticket Assignment`, so
+  settings are per-account and stay writable even when the app is
+  installed to Program Files. (Older builds kept it next to the `.exe`;
+  that file is migrated across on first run.)
   macOS uses `~/Library/Application Support/Ticket Assignment/config.ini`
   instead, since writing inside a signed `.app` bundle isn't reliable and
   isn't where macOS apps are expected to keep settings. See
@@ -237,7 +240,7 @@ import it once with:
 python tools/migrate_json_to_sql.py --json-file "\\shared\drive\ticket_assignment_data.json"
 ```
 
-By default it reads connection info from `config.ini` next to the script;
+By default it reads connection info from the app's `config.ini`;
 pass `--server`/`--database` (and `--uid`/`--pwd` for SQL auth) to target a
 different database. Use `--dry-run` first to preview what would be
 imported without writing anything. See `python tools/migrate_json_to_sql.py --help`
@@ -274,13 +277,23 @@ Then install it for the current user:
 .\packaging\install.ps1            # add -Desktop for a desktop shortcut too
 ```
 
-That copies the build to `%LOCALAPPDATA%\Programs\Ticket Assignment` and
-creates a Start Menu shortcut, so users launch it like any other app and
-never see `_internal\`. It's per-user, so **no administrator rights are
-needed**. Re-running it updates an existing install and preserves that
-machine's `config.ini` (database connection, dark mode, last location).
-`.\packaging\install.ps1 -Uninstall` removes it again, backing the config
-up first.
+That copies the build to `%ProgramFiles%\Ticket Assignment` and creates
+an **all-users** Start Menu shortcut, so users launch it like any other
+app and never see `_internal\`. It needs administrator rights and
+re-launches itself elevated if you didn't start it that way.
+
+Machine-wide rather than per-user on purpose: a per-user install lands in
+one account's profile, which another account can't read. That matters when
+the app is launched as a different account than the one signed in (via
+"run as different user"), which is a common way to reach a database the
+signed-in account has no rights to.
+
+Settings live in each account's `%APPDATA%\Ticket Assignment`, not in the
+install directory — Program Files is read-only for standard users, and
+settings are per-account anyway. They survive updates and uninstalls, and
+an older per-user install's `config.ini` is migrated across
+automatically. `.\packaging\install.ps1 -Uninstall` removes the app and
+shortcuts but leaves settings alone.
 
 `install.ps1` is also copied into the build folder, so
 `dist\Ticket Assignment Windows` is self-contained: to deploy to other

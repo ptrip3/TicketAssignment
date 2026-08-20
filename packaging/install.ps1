@@ -1,17 +1,25 @@
 <#
 .SYNOPSIS
-    Installs (or updates) Ticket Assignment for the current user.
+    Installs (or updates) Ticket Assignment for everyone on this machine.
 
 .DESCRIPTION
-    Copies the PyInstaller build into the user's local app data and creates
-    a Start Menu shortcut, so people launch it like any other app and never
-    have to see the _internal folder the .exe needs beside it.
+    Copies the PyInstaller build into Program Files and creates an
+    all-users Start Menu shortcut, so people launch it like any other app
+    and never have to see the _internal folder the .exe needs beside it.
 
-    Per-user by design: everything goes under %LOCALAPPDATA% and the
-    per-user Start Menu, so no administrator rights are needed.
+    Machine-wide on purpose: a per-user install lands in one account's
+    profile, which another account cannot read. That matters here because
+    the app is often launched as a different account (via "run as
+    different user") than the one signed in. Program Files is readable by
+    every account, so the same install serves all of them.
 
-    An existing config.ini is preserved across updates -- that's where the
-    database connection details live, so reinstalling must not reset it.
+    Requires administrator rights, and re-launches itself elevated if it
+    wasn't started that way.
+
+    Settings (database connection, dark mode, last location) live in each
+    account's %APPDATA%\Ticket Assignment, not in the install directory,
+    so they survive updates and stay per-account. A config.ini left in an
+    older per-user install is migrated across automatically.
 
 .PARAMETER SourcePath
     The built folder to install from. Defaults to whichever makes sense:
@@ -20,7 +28,7 @@
     dist\Ticket Assignment Windows produced by PyInstaller.
 
 .PARAMETER Desktop
-    Also create a desktop shortcut.
+    Also create an all-users desktop shortcut.
 
 .PARAMETER Uninstall
     Remove the installed copy and its shortcuts instead of installing.
@@ -41,12 +49,40 @@ $ErrorActionPreference = 'Stop'
 
 $AppName      = 'Ticket Assignment'          # the .exe, shortcut and install folder
 $BuildName    = 'Ticket Assignment Windows'  # what the spec names the build folder
-$InstallRoot  = Join-Path $env:LOCALAPPDATA 'Programs'
-$InstallDir   = Join-Path $InstallRoot $AppName
+$InstallDir   = Join-Path $env:ProgramFiles $AppName
 $ExePath      = Join-Path $InstallDir "$AppName.exe"
-$StartMenuDir = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
+$StartMenuDir = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs'
 $StartShortcut= Join-Path $StartMenuDir "$AppName.lnk"
-$DesktopShortcut = Join-Path ([Environment]::GetFolderPath('Desktop')) "$AppName.lnk"
+$DesktopShortcut = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) "$AppName.lnk"
+
+# Where a previous per-user install would have put things, so an upgrade
+# can clean it up and carry its settings over.
+$LegacyInstallDir = Join-Path (Join-Path $env:LOCALAPPDATA 'Programs') $AppName
+$LegacyStartShortcut = Join-Path (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs') "$AppName.lnk"
+$UserConfigDir = Join-Path $env:APPDATA $AppName
+
+function Test-Admin {
+    $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+    (New-Object Security.Principal.WindowsPrincipal($id)).IsInRole(
+        [Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Assert-Admin {
+    if (Test-Admin) { return }
+    Write-Host 'Administrator rights are required to write to Program Files.'
+    Write-Host 'Re-launching elevated...'
+    $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"")
+    if ($SourcePath) { $argList += @('-SourcePath', "`"$SourcePath`"") }
+    if ($Desktop)    { $argList += '-Desktop' }
+    if ($Uninstall)  { $argList += '-Uninstall' }
+    try {
+        Start-Process -FilePath 'powershell.exe' -ArgumentList $argList -Verb RunAs -Wait
+    } catch {
+        throw "Elevation was declined or failed. Re-run this script from an " +
+              "administrator PowerShell prompt."
+    }
+    exit
+}
 
 function New-Shortcut([string] $LinkPath, [string] $Target, [string] $WorkDir) {
     $shell = New-Object -ComObject WScript.Shell
@@ -67,21 +103,24 @@ function Stop-RunningApp {
 }
 
 if ($Uninstall) {
+    Assert-Admin
     Stop-RunningApp
-    foreach ($lnk in @($StartShortcut, $DesktopShortcut)) {
+    foreach ($lnk in @($StartShortcut, $DesktopShortcut, $LegacyStartShortcut)) {
         if (Test-Path $lnk) { Remove-Item $lnk -Force; Write-Host "Removed shortcut: $lnk" }
     }
-    if (Test-Path $InstallDir) {
-        $keep = Join-Path $InstallDir 'config.ini'
-        if (Test-Path $keep) {
-            $backup = Join-Path $env:LOCALAPPDATA "$AppName-config-backup.ini"
-            Copy-Item $keep $backup -Force
-            Write-Host "Saved your settings to: $backup"
+    $removedSomething = $false
+    foreach ($dir in @($InstallDir, $LegacyInstallDir)) {
+        if (Test-Path $dir) {
+            Remove-Item $dir -Recurse -Force
+            Write-Host "Removed: $dir"
+            $removedSomething = $true
         }
-        Remove-Item $InstallDir -Recurse -Force
-        Write-Host "Removed: $InstallDir"
-    } else {
-        Write-Host "Nothing installed at $InstallDir"
+    }
+    if (-not $removedSomething) { Write-Host "Nothing installed at $InstallDir" }
+    # Settings live per-account in %APPDATA% and are deliberately left
+    # alone, so reinstalling doesn't lose the database connection.
+    if (Test-Path $UserConfigDir) {
+        Write-Host "Left your settings in place: $UserConfigDir"
     }
     Write-Host "`nUninstalled."
     return
@@ -102,22 +141,28 @@ if (-not $SourcePath) {
 }
 if (-not (Test-Path $SourcePath)) {
     throw "Build not found at '$SourcePath'. Run this first:`n" +
-          "    python -m PyInstaller TicketAssignment_windows.spec"
+          "    python -m PyInstaller packaging\TicketAssignment_windows.spec"
 }
 $sourceExe = Join-Path $SourcePath "$AppName.exe"
 if (-not (Test-Path $sourceExe)) {
     throw "'$SourcePath' doesn't look like a build -- no $AppName.exe inside it."
 }
 
+# Resolve now, before elevating: the elevated process gets a different
+# %LOCALAPPDATA%, so a relative or profile-based source path would move.
+$SourcePath = (Resolve-Path $SourcePath).Path
+
+Assert-Admin
 Stop-RunningApp
 
-# Preserve existing settings (database connection, dark mode, last location)
-$existingConfig = Join-Path $InstallDir 'config.ini'
-$savedConfig = $null
-if (Test-Path $existingConfig) {
-    $savedConfig = Join-Path $env:TEMP "$AppName-config-$(Get-Random).ini"
-    Copy-Item $existingConfig $savedConfig -Force
-    Write-Host 'Preserving existing config.ini'
+# Carry settings over from an older per-user install, which kept
+# config.ini beside the .exe. The app looks in %APPDATA% now.
+$legacyConfig = Join-Path $LegacyInstallDir 'config.ini'
+$userConfig = Join-Path $UserConfigDir 'config.ini'
+if ((Test-Path $legacyConfig) -and -not (Test-Path $userConfig)) {
+    New-Item -ItemType Directory -Path $UserConfigDir -Force | Out-Null
+    Copy-Item $legacyConfig $userConfig -Force
+    Write-Host "Moved your settings to: $userConfig"
 }
 
 if (Test-Path $InstallDir) {
@@ -125,22 +170,28 @@ if (Test-Path $InstallDir) {
 }
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 Copy-Item (Join-Path $SourcePath '*') $InstallDir -Recurse -Force
-# The installed copy keeps its own install.ps1 (handy for -Uninstall from
-# the installed location), but never a stale config.ini from the build.
+# Never ship a config.ini into Program Files: it would be read-only for
+# standard users, and settings are per-account in %APPDATA% now.
+$strayConfig = Join-Path $InstallDir 'config.ini'
+if (Test-Path $strayConfig) { Remove-Item $strayConfig -Force }
 Write-Host "Installed to: $InstallDir"
 
-if ($savedConfig) {
-    Copy-Item $savedConfig $existingConfig -Force
-    Remove-Item $savedConfig -Force
-    Write-Host 'Restored your existing settings'
+# A previous per-user install would otherwise shadow this one in that
+# account's Start Menu.
+if (Test-Path $LegacyInstallDir) {
+    Remove-Item $LegacyInstallDir -Recurse -Force
+    Write-Host "Removed the older per-user install: $LegacyInstallDir"
 }
+if (Test-Path $LegacyStartShortcut) { Remove-Item $LegacyStartShortcut -Force }
 
 New-Shortcut -LinkPath $StartShortcut -Target $ExePath -WorkDir $InstallDir
-Write-Host "Start Menu shortcut created"
+Write-Host "Start Menu shortcut created (all users)"
 if ($Desktop) {
     New-Shortcut -LinkPath $DesktopShortcut -Target $ExePath -WorkDir $InstallDir
-    Write-Host "Desktop shortcut created"
+    Write-Host "Desktop shortcut created (all users)"
 }
 
 Write-Host "`nDone. Launch '$AppName' from the Start Menu."
+Write-Host "Any account on this machine can run it; each keeps its own"
+Write-Host "settings in %APPDATA%\$AppName."
 Write-Host "To remove it later:  .\install.ps1 -Uninstall"
