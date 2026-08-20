@@ -45,14 +45,20 @@ def _try_optional_import(module_name, purpose):
 # option, falling back to pytds/SQL login.
 pyodbc = _try_optional_import("pyodbc", "Kerberos domain login")
 
-# Optional, non-Windows only: powers NTLM domain-login authentication over
-# the pytds backend (db.py's _pytds_ntlm_auth()) -- lets Mac techs
-# authenticate with their own domain username/password without
-# Microsoft's ODBC driver at all, just `pip install pyspnego` (pure Python
-# + the `cryptography` package, no system libraries, no Homebrew).
-# Presence-checked here the same way as pyodbc above, only to decide
-# whether the connection dialog offers the option.
-spnego = _try_optional_import("spnego", "NTLM domain login")
+def _ntlm_available():
+    """Whether NTLM domain login can be offered (pyspnego importable).
+
+    Checked lazily, when the connection dialog is actually opened, rather
+    than at import time: pyspnego pulls in `cryptography` and costs well
+    over 100ms to import, which is pure startup latency for a feature most
+    launches never touch. Cached after the first call.
+
+    (db.py imports pyspnego itself, via pytds, only when a connection
+    actually uses NTLM -- this is purely about whether to offer it.)
+    """
+    if not hasattr(_ntlm_available, "_cached"):
+        _ntlm_available._cached = _try_optional_import("spnego", "NTLM domain login") is not None
+    return _ntlm_available._cached
 
 APP_VERSION = "2.0.0"
 APP_DATE = "2026-08-18"
@@ -127,6 +133,7 @@ class TicketAssignmentApp:
         self.config = self._load_config()
         self.db = None
 
+        verify_schema = False
         if not self._has_database_config():
             self._configure_database_connection(required=True)
             if self.db is None:
@@ -137,19 +144,21 @@ class TicketAssignmentApp:
         else:
             self.db = Database.from_config(self.config)
             try:
-                # Defensive: makes config.ini alone sufficient to run the app
-                # even if the tables were never created (e.g. config.ini was
-                # copied/edited by hand rather than set up via the dialog, or
-                # the database was recreated). Idempotent and cheap if the
-                # schema already exists. Deliberately does NOT create the
-                # database itself here -- that's a bigger, less reversible
-                # step that only happens through the connection dialog, where
-                # the user explicitly confirms it.
-                self.db.ensure_schema()
+                # Defensive: makes config.ini alone sufficient to run the
+                # app even if the tables were never created (e.g. config.ini
+                # was copied by hand, or the database was recreated).
+                # Deliberately does NOT create the database itself -- that's
+                # a bigger, less reversible step that only happens through
+                # the connection dialog, where the user confirms it.
+                #
+                # Folded into load_data() so startup opens one connection
+                # and asks one cheap question, instead of a whole extra
+                # connection replaying every DDL batch on every launch.
+                verify_schema = True
             except DatabaseError as e:
                 print(f"Could not verify/create database schema: {e}")
 
-        self.load_data()
+        self.load_data(verify_schema=verify_schema)
 
         default_location = self.config.get("Settings", "last_location", fallback=None)
         if default_location and default_location in self.locations:
@@ -170,7 +179,6 @@ class TicketAssignmentApp:
         # Treeview, Combobox, Entry, Checkbutton, Notebook, Scrollbar, etc.)
         # with real hover/pressed/selected states, in both light and dark,
         # so the app doesn't have to hand-roll any of that.
-        sv_ttk.set_theme("dark" if self.dark_mode.get() else "light", root=self.root)
 
         # sv_ttk only themes ttk widgets. What's left here is strictly for
         # things it doesn't reach: raw (non-ttk) tk widgets (status_text,
@@ -250,8 +258,6 @@ class TicketAssignmentApp:
         self._apply_theme_styles()
 
         self._show_frame(self.selector_frame)
-
-        self.load_data()
 
         self.last_check = datetime.now()
         self._start_status_checker()
@@ -426,7 +432,7 @@ class TicketAssignmentApp:
         # this dialog looks exactly like it did before either existed --
         # plain Server/Port/Database/SQL Login/Password.
         pyodbc_available = pyodbc is not None
-        ntlm_available = spnego is not None
+        ntlm_available = _ntlm_available()
 
         dialog = tk.Toplevel(self.root)
         dialog.title("Configure Database Connection")
@@ -1799,7 +1805,9 @@ class TicketAssignmentApp:
         theme = "dark" if self.dark_mode.get() else "light"
         colors = self.colors[theme]
 
-        sv_ttk.set_theme(theme, root=self.root)
+        if getattr(self, "_applied_theme", None) != theme:
+            sv_ttk.set_theme(theme, root=self.root)
+            self._applied_theme = theme
 
         self.root.configure(bg=colors["bg"])
 
@@ -2622,12 +2630,16 @@ class TicketAssignmentApp:
             arrow = (" ▼" if reverse else " ▲") if col == column else ""
             tree.heading(col, text=col + arrow)
 
-    def load_data(self):
-        """Load data from the database and initialize data structures."""
+    def load_data(self, verify_schema=False):
+        """Load data from the database and initialize data structures.
+
+        verify_schema=True also checks (and repairs, if needed) the tables
+        on the same connection -- used once at startup.
+        """
         if self.db is None:
             return
         try:
-            locations = self.db.load_all()
+            locations = self.db.load_all(verify_schema=verify_schema)
             self.locations.clear()
             for location, location_data in locations.items():
                 location_data["names"] = deque(location_data["names"])

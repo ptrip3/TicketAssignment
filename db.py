@@ -348,22 +348,43 @@ class Database:
 
     def ensure_schema(self):
         """Create tables from schema.sql if they don't exist yet (idempotent)."""
-        with open(_SCHEMA_PATH, "r", encoding="utf-8") as f:
-            sql = f.read()
-        batches = [b.strip() for b in re.split(r"(?m)^\s*GO\s*$", sql) if b.strip()]
         conn = self._connect(autocommit=True)
         try:
-            cur = self._cursor(conn)
-            for batch in batches:
-                cur.execute(batch)
+            self._apply_schema(self._cursor(conn))
         finally:
             conn.close()
+
+    def _apply_schema(self, cur):
+        """Run schema.sql on an already-open cursor."""
+        with open(_SCHEMA_PATH, "r", encoding="utf-8") as f:
+            sql = f.read()
+        for batch in re.split(r"(?m)^\s*GO\s*$", sql):
+            batch = batch.strip()
+            if batch:
+                cur.execute(batch)
+
+    def _schema_is_current(self, cur):
+        """Whether every table and late-added column already exists.
+
+        One round trip, versus replaying all of schema.sql's batches. The
+        DDL is idempotent either way, so this is purely about not paying
+        for ~7 statements on a remote server every single launch.
+        """
+        cur.execute(
+            "SELECT"
+            " (SELECT COUNT(*) FROM sys.tables WHERE schema_id = SCHEMA_ID('dbo')"
+            "  AND name IN ('Locations','Names','DailyCounts','Schedules','StatusEntries')),"
+            " (SELECT COUNT(*) FROM sys.columns WHERE object_id = OBJECT_ID('dbo.StatusEntries')"
+            "  AND name IN ('HalfDay','HalfDayPeriod'))"
+        )
+        tables, columns = cur.fetchone()
+        return tables == 5 and columns == 2
 
     # ------------------------------------------------------------------
     # Reads
     # ------------------------------------------------------------------
 
-    def load_all(self):
+    def load_all(self, verify_schema=False):
         """Load every location's full data.
 
         Returns {location_name: location_data} where location_data matches
@@ -373,6 +394,13 @@ class Database:
         conn = self._connect(autocommit=True)
         try:
             cur = self._cursor(conn)
+
+            if verify_schema and not self._schema_is_current(cur):
+                # Rare path: first run against a fresh database, or one
+                # whose tables were dropped/recreated. Repair in place
+                # rather than opening a second connection for it.
+                self._apply_schema(cur)
+
             locations = {}
 
             cur.execute("SELECT LocationName FROM dbo.Locations")
