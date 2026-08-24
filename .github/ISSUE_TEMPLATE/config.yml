@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/ptrip3/TicketAssignment/security/advisories/new
+    about: Report privately instead of opening a public issue. See SECURITY.md.
+  - name: Setup and connection problems
+    url: https://github.com/ptrip3/TicketAssignment#requirements
+    about: Check the README first — most connection failures are a missing ODBC driver, TCP/IP disabled on the server, or a named instance without SQL Browser.
