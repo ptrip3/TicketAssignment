@@ -160,7 +160,7 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name=APP_NAME + ".app",
-    icon=None,  # drop an .icns file next to this spec and point this at it for a real icon
+    icon=os.path.join(SPECPATH, 'ticketassignment.icns'),
     bundle_identifier='com.ticketassignment.app',
     info_plist={
         'CFBundleName': 'Ticket Assignment',
