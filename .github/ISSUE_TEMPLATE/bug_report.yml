@@ -1,0 +1,104 @@
+name: Bug report
+description: Something works differently than it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please do not use this form for security
+        problems — see [SECURITY.md](../blob/master/SECURITY.md) for how to
+        report those privately.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open the app with Location "Front Desk" selected
+        2. Set Jane to Vacation, 12 Mar - 14 Mar, half day (afternoon)
+        3. Click Assign Ticket
+        4. Jane is skipped for the whole day rather than the afternoon
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows
+        - macOS
+        - Other (please say which in the description)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Database backend
+      description: |
+        Shown in the connection dialog. Windows defaults to pyodbc and macOS to
+        python-tds, but either can be overridden in config.ini. A lot of issues
+        turn out to be specific to one backend, so this matters.
+      options:
+        - pyodbc (Windows ODBC driver)
+        - python-tds (pure Python)
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: auth
+    attributes:
+      label: Authentication mode
+      options:
+        - Windows Authentication / Trusted Connection
+        - SQL Server login (username + password)
+        - NTLM domain login (macOS)
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: app-version
+    attributes:
+      label: App version
+      description: Shown in Help → About.
+      placeholder: "2.0.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: how-run
+    attributes:
+      label: How are you running it?
+      options:
+        - Built app (PyInstaller bundle)
+        - From source (python src/name_selector.py)
+    validations:
+      required: true
+
+  - type: input
+    id: sql-version
+    attributes:
+      label: SQL Server version
+      description: "`SELECT @@VERSION` if you have access."
+      placeholder: "SQL Server 2019"
+
+  - type: textarea
+    id: error
+    attributes:
+      label: Error text
+      description: |
+        Full text of any error dialog. If you are running from source, include
+        anything printed to the console — the built app is windowed and has
+        nowhere to print, so running from source often reveals more.
+      render: text

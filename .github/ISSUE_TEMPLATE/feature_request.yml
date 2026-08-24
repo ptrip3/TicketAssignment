@@ -1,0 +1,55 @@
+name: Feature request
+description: Suggest something the app should do
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is a focused tool for round-robin ticket assignment across a small
+        team. Suggestions that make that job better are very welcome;
+        general-purpose features less so. Saying what problem you hit helps a
+        lot more than describing a solution.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you running into?
+      description: |
+        Describe the situation, not the feature. "Two techs share a shift and
+        the rotation gives them each a full day's tickets" tells us more than
+        "add shift support".
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like it to do?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What are you doing instead today?
+      description: Workarounds are useful — they show how much friction this causes.
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Which platforms does this need to work on?
+      multiple: true
+      options:
+        - Windows
+        - macOS
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - label: This would change how data is stored (new table or column in the schema)
+        - label: This would need a new third-party dependency
+        - label: I would be willing to work on this
