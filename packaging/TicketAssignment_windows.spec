@@ -156,7 +156,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,  # drop an .ico file next to this spec and point this at it for a real icon
+    icon=os.path.join(SPECPATH, 'ticketassignment.ico'),
 )
 
 coll = COLLECT(
