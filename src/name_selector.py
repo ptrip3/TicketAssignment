@@ -71,31 +71,102 @@ def _app_dir():
     return os.path.dirname(os.path.abspath(__file__))
 
 
-def _get_config_dir():
-    """Directory to store config.ini in, appropriate for the platform.
+def _config_dir_candidates():
+    """Directories config.ini may live in, most-preferred first.
 
-    Windows: %APPDATA%/Ticket Assignment. Earlier versions kept it next
-    to the .exe, which only worked while the app was installed somewhere
-    the user could write. Installing to Program Files makes that
-    directory read-only for standard users, and settings are per-user
-    anyway, so they belong in the roaming profile. _migrate_legacy_config
-    moves an older config across on first run.
+    Windows: %APPDATA%/Ticket Assignment first. Earlier versions kept
+    it next to the .exe, which only worked while the app was installed
+    somewhere the user could write; Program Files is read-only for
+    standard users, and settings are per-user anyway, so they belong in
+    the profile. _migrate_legacy_config moves an older config across on
+    first run.
 
-    macOS: ~/Library/Application Support/Ticket Assignment. Writing inside
-    a signed .app bundle isn't reliable (code-signing expects the bundle's
-    contents not to change after signing) and isn't where macOS apps are
-    expected to keep user settings anyway.
+    There is more than one Windows candidate because %APPDATA% is not
+    always usable, for reasons the app cannot control:
 
-    Anything else (e.g. Linux): ~/.config/Ticket Assignment, following the
-    XDG Base Directory convention, for the same reason.
+      - Group Policy folder redirection commonly points the roaming AppData folder
+        at a network share, which is unreachable off the corporate
+        network and can deny access outright to an account being used
+        via "run as different user" -- the normal way this app gets
+        launched here, since the account with database rights is often
+        not the one signed in.
+      - A profile that has never been created on the machine leaves
+        %APPDATA% pointing somewhere that cannot be written.
+
+    %LOCALAPPDATA% is never subject to folder redirection, so it makes a
+    reliable second choice; settings simply stop following the user
+    between machines, which beats not saving at all.
+
+    macOS: ~/Library/Application Support/Ticket Assignment. Writing
+    inside a signed .app bundle isn't reliable (code-signing expects the
+    bundle's contents not to change after signing) and isn't where macOS
+    apps are expected to keep user settings anyway.
+
+    Anything else (e.g. Linux): ~/.config/Ticket Assignment, following
+    the XDG Base Directory convention, for the same reason.
     """
+    candidates = []
     if sys.platform == "win32":
-        base = os.environ.get("APPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Roaming")
-        return os.path.join(base, APP_NAME)
+        for env_var in ("APPDATA", "LOCALAPPDATA"):
+            base = os.environ.get(env_var)
+            if base:
+                candidates.append(os.path.join(base, APP_NAME))
+        # Last resort if neither variable is set at all, which happens
+        # when a process is started without an environment block.
+        candidates.append(os.path.join(os.path.expanduser("~"), "AppData", "Roaming", APP_NAME))
     elif sys.platform == "darwin":
-        return os.path.join(os.path.expanduser("~"), "Library", "Application Support", APP_NAME)
+        candidates.append(os.path.join(os.path.expanduser("~"), "Library", "Application Support", APP_NAME))
     else:
-        return os.path.join(os.path.expanduser("~"), ".config", APP_NAME)
+        candidates.append(os.path.join(os.path.expanduser("~"), ".config", APP_NAME))
+    # Dedupe while preserving order: APPDATA and LOCALAPPDATA can point
+    # at the same place on unusual profile setups.
+    seen = set()
+    return [d for d in candidates if not (d in seen or seen.add(d))]
+
+
+def _dir_is_writable(path):
+    """Whether config.ini could actually be written into `path`."""
+    try:
+        os.makedirs(path, exist_ok=True)
+        probe = os.path.join(path, ".write_test")
+        with open(probe, "w"):
+            pass
+        os.remove(probe)
+        return True
+    except OSError:
+        return False
+
+
+def _get_config_dir():
+    """Where config.ini is read from and written to.
+
+    Prefers a location that already holds a config.ini, so settings
+    written to a fallback on an earlier run are still found; failing
+    that, the first location that is actually writable; failing that,
+    the preferred one, so an error still names the expected path rather
+    than an obscure fallback.
+
+    Cached after the first call: resolving this probes the filesystem,
+    and when %APPDATA% is redirected to an unreachable share those
+    probes block on network timeouts. _save_config runs on every
+    settings change, so re-resolving each time could stall the UI.
+    """
+    cached = getattr(_get_config_dir, "_cached", None)
+    if cached is not None:
+        return cached
+    candidates = _config_dir_candidates()
+    resolved = None
+    for candidate in candidates:
+        try:
+            if os.path.exists(os.path.join(candidate, "config.ini")):
+                resolved = candidate
+                break
+        except OSError:
+            continue
+    if resolved is None:
+        resolved = next((c for c in candidates if _dir_is_writable(c)), candidates[0])
+    _get_config_dir._cached = resolved
+    return resolved
 
 
 def _migrate_legacy_config(config_file):
@@ -406,14 +477,28 @@ class TicketAssignmentApp:
 
     def _save_config(self):
         """Save configuration to file."""
+        config_file = os.path.join(_get_config_dir(), "config.ini")
         try:
-            config_file = os.path.join(_get_config_dir(), "config.ini")
             os.makedirs(os.path.dirname(config_file), exist_ok=True)
             with open(config_file, "w") as f:
                 self.config.write(f)
         except Exception as e:
+            # Both the path and the underlying error go in the dialog, not
+            # just print(): windowed PyInstaller builds (console=False in
+            # the spec) have nowhere for stdout to go, so a print here is
+            # invisible to anyone running the built app. The usual causes
+            # are all path- or permission-specific -- %APPDATA% redirected
+            # to an unreachable network share, a profile never created for
+            # an account used via "run as different user", or a read-only
+            # config.ini -- and they cannot be told apart without seeing
+            # which path failed and why.
             print(f"Error saving config: {e}")
-            messagebox.showerror("Error", "Could not save configuration file. Settings may not persist.")
+            messagebox.showerror(
+                "Error",
+                "Could not save configuration file. Settings may not persist.\n\n"
+                f"Path: {config_file}\n"
+                f"{type(e).__name__}: {e}",
+            )
 
     def _position_dialog_beside_root(self, dialog):
         """Pin dialog directly beside the main window (ThrottleStop-style
