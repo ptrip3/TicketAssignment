@@ -2,8 +2,8 @@
 
 ## Supported Versions
 
-This is a small internal-tooling project with a single active line. Only the
-latest release on `master` receives fixes.
+This project has a single active release line. Only the latest release on
+`master` receives fixes.
 
 | Version | Supported          |
 | ------- | ------------------ |
@@ -11,70 +11,68 @@ latest release on `master` receives fixes.
 | < 2.0   | :x:                |
 
 The 1.x line stored data in local JSON files rather than SQL Server and is no
-longer maintained. See [Migrating from the older JSON-file
-version](README.md#migrating-from-the-older-json-file-version) if you are still
-on it.
+longer maintained. If you're still using it, see [Migrate from the JSON-file
+version](README.md#migrate-from-the-json-file-version).
 
 ## Reporting a Vulnerability
 
 Please **do not open a public issue** for security problems.
 
-Use GitHub's [private vulnerability reporting][report] instead. It is visible
-only to the maintainers, and lets us discuss and patch before anything is
-public.
+Use GitHub's [private vulnerability reporting][report] instead. Reports are
+visible only to the maintainers, which allows a fix to be prepared before any
+details are public.
 
 [report]: https://github.com/ptrip3/TicketAssignment/security/advisories/new
 
-Useful things to include:
+Include the following where you can:
 
-- Which version, and which platform (Windows/pyodbc or macOS/python-tds — the
-  two backends have quite different code paths)
-- What an attacker would need in order to exploit it: network access to the SQL
-  Server, a local account on a client machine, write access to a shared install
-  directory, and so on
-- A reproduction if you have one
+- The version, and the platform and backend. The `pyodbc` and `python-tds` code
+  paths differ significantly.
+- What an attacker would need to exploit it, such as network access to the SQL
+  Server, a local account on a client machine, or write access to a shared
+  install directory.
+- Reproduction steps, if you have them.
 
-Expect an initial response within a couple of weeks. This is maintained by one
-person alongside other work, so please be patient.
+Expect an initial response within two weeks. This project is maintained by one
+person alongside other work.
 
 ## Known Security Characteristics
 
-These are deliberate design properties rather than bugs, but they matter when
-deciding where to deploy this app. Reporting them is not necessary — they are
-already documented here and in the README's [Known
-limitations](README.md#known-limitations).
+The following are deliberate design decisions rather than defects, but they
+affect where this app is appropriate to deploy. You don't need to report them.
+They're also listed in [Known limitations](README.md#known-limitations).
 
 ### Connection credentials are stored in plaintext
 
 `config.ini` holds the SQL Server connection details, including a password when
-one is used. It is stored per-user (`%APPDATA%\Ticket Assignment` on Windows,
-`~/Library/Application Support/Ticket Assignment` on macOS) with no encryption
-beyond the filesystem permissions of that profile directory.
+one is used. The file is stored per-user, in `%APPDATA%\Ticket Assignment` on
+Windows and `~/Library/Application Support/Ticket Assignment` on macOS. It isn't
+encrypted. The only protection is the file system permissions on that profile
+directory.
 
-On Windows, using Windows Authentication avoids storing a password at all, and
-is the recommended configuration. On macOS both available modes (SQL Server
-login and NTLM domain login) require a password.
+On Windows, Windows Authentication avoids storing a password and is the
+recommended configuration. On macOS, both authentication modes require one.
 
 ### The app talks directly to SQL Server
 
-There is no application server in between. Every client opens its own TDS
-connection, so each user needs database rights of their own, and the database's
-own permissions are the entire authorization model. The app does not, and
-cannot, enforce access control beyond what SQL Server grants that login.
+There's no application server between the client and the database. Every client
+opens its own TDS connection, so each user needs their own database rights, and
+SQL Server permissions are the entire authorization model. The app can't enforce
+access control beyond what SQL Server grants that login.
 
-This means a user with database rights can modify any location's data by any
-means available to that login, not just through this app.
+A user with database rights can therefore modify any location's data through any
+client, not only through this app.
 
 ### Released binaries are unsigned
 
 The Windows and macOS builds produced by the PyInstaller specs in `packaging/`
-are not code-signed or notarized. Verify you obtained a build from a source you
-trust; the macOS build additionally requires a Gatekeeper workaround documented
-in the README.
+aren't code-signed or notarized. Confirm that any build you run came from a
+source you trust. The macOS build also requires the Gatekeeper workaround
+described in the README.
 
 ### SQL is parameterized, but the database name is not
 
-All queries in `src/db.py` use `?`-style placeholders with tuple parameters. The
-one exception is `CREATE DATABASE`, whose name cannot be parameterized in T-SQL;
-it is instead validated against `^[A-Za-z_][A-Za-z0-9_]*$` before use. That value
-comes from the local `config.ini`, not from other users' input.
+All queries in `src/db.py` use `?` placeholders with tuple parameters. The one
+exception is `CREATE DATABASE`, because T-SQL can't parameterize a database
+name. That value is validated against `^[A-Za-z_][A-Za-z0-9_]*$` before use, and
+it comes from the local `config.ini` rather than from another user's input.

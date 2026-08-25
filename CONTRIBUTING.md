@@ -1,21 +1,21 @@
 # Contributing
 
-Thanks for taking a look. This is a small, focused tool — a round-robin ticket
-assigner for a single team — so the bar for new features is "does this help a
-team rotate tickets fairly", not "is this generally useful".
+This is a focused tool for round-robin ticket assignment across a team. The
+test for a new feature is whether it helps a team rotate tickets fairly, not
+whether it's generally useful.
 
-By participating you agree to abide by the [Code of Conduct](CODE_OF_CONDUCT.md).
+By participating, you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
-## Getting set up
+## Set up a development environment
 
-You need Python 3 **with Tk**. Both the python.org installer and Homebrew's
-`python` include it; some minimal installs do not. Check with:
+You need Python 3 with Tk. To confirm Tk is present, run:
 
 ```bash
 python3 -m tkinter
 ```
 
-If a small test window opens, you are fine.
+A small test window opens if it is. The python.org installer and Homebrew's
+`python` both include Tk, but some minimal installations don't.
 
 ```bash
 python -m venv .venv
@@ -25,99 +25,108 @@ pip install -r requirements.txt
 python src/name_selector.py
 ```
 
-`requirements.txt` uses environment markers, so `pip` picks the right database
-driver for your platform automatically — `pyodbc` on Windows, `python-tds` and
-`pyspnego` elsewhere. Do not install the other platform's driver by hand; the
-PyInstaller specs deliberately exclude it.
+`requirements.txt` uses environment markers, so `pip` installs the correct
+database driver for your platform: `pyodbc` on Windows, `python-tds` and
+`pyspnego` elsewhere.
 
-**Windows only:** `pyodbc` needs a system ODBC driver, which is not a pip
-package. See [Requirements](README.md#requirements) for how to check what you
-have.
+> [!IMPORTANT]
+> Don't install the other platform's driver manually. The PyInstaller specs
+> exclude it, so a manually installed driver works in development and then
+> fails in the built app.
 
-You will also need a SQL Server instance to point at. It does not have to be
-shared — a local SQL Server Express is fine for development, as long as TCP/IP
-is enabled if you want to exercise the macOS code path.
+On Windows, `pyodbc` also needs a system ODBC driver, which isn't a pip
+package. See [Requirements](README.md#requirements).
 
-## How the code is laid out
+You also need a SQL Server instance. It doesn't have to be shared. A local SQL
+Server Express instance works, as long as you enable TCP/IP if you want to test
+the macOS code path.
 
-| Path | What it is |
+## How the code is organized
+
+| Path | Contents |
 | --- | --- |
 | `src/name_selector.py` | The Tkinter UI and all in-memory state. Most of the app. |
 | `src/db.py` | Every SQL Server query. Two backends behind one interface. |
-| `src/models.py` | Shared types, kept separate so `db.py` need not import the UI. |
+| `src/models.py` | Shared domain types, kept separate from the UI. |
 | `src/datepicker.py` | Custom Tk calendar widget. |
-| `src/schema.sql` | The DDL `ensure_schema()` applies. |
-| `packaging/` | PyInstaller specs and the Windows installer script. |
+| `src/schema.sql` | The DDL that `ensure_schema()` applies. |
+| `packaging/` | PyInstaller specs, icons, and the Windows installer. |
 | `tools/` | One-off migration and maintenance scripts. |
 
-Two things worth knowing before you change anything:
+Two constraints to be aware of before changing anything:
 
-- **`db.py` supports two backends.** Every query is written once with `?`
-  placeholders and tuple params, and `_CursorAdapter` translates for
-  `python-tds`. If you add a query, keep that convention — do not write
-  backend-specific SQL.
-- **`models.py` exists to avoid a circular import.** `db.py` needs
-  `StatusDuration`; `name_selector.py` imports `db`. Do not move domain types
-  back into `name_selector.py`.
+**`db.py` supports two backends.** Each query is written once with `?`
+placeholders and tuple parameters, and `_CursorAdapter` translates them for
+`python-tds`. If you add a query, follow that pattern. Don't write
+backend-specific SQL.
+
+**`models.py` exists to prevent a circular import.** `db.py` needs
+`StatusDuration`, and `name_selector.py` imports `db`. Don't move domain types
+back into `name_selector.py`.
 
 ## Style
 
-Match the surrounding code. This codebase comments *why*, not *what*, and it
-does so more heavily than most Python projects — particularly where behaviour is
-non-obvious or a naive change would break something. Several comments exist
-specifically to stop a future reader "simplifying" something load-bearing (see
-the `unicodedata` note in the PyInstaller specs for a representative example).
-If you find yourself removing one of those, that is a sign the change needs more
-thought, not less.
+Match the surrounding code. This codebase explains why, not what, and does so
+more heavily than most Python projects, especially where the behavior is
+non-obvious or where a naive change would break something. Several comments
+exist specifically to prevent a future reader from simplifying away something
+load-bearing. For an example, see the `unicodedata` note in the PyInstaller
+specs. If you're removing a comment like that, the change needs more scrutiny,
+not less.
 
-Otherwise: standard PEP 8, 4-space indents, and no new runtime dependencies
-without discussing it first. Every added dependency has to survive being frozen
-into a PyInstaller bundle on two platforms.
+Otherwise, follow PEP 8 with 4-space indents.
+
+Discuss new runtime dependencies before adding one. Every dependency has to
+work when frozen into a PyInstaller bundle on both platforms.
 
 ## Testing
 
-There is no automated test suite. Changes are verified by running the app
-against a real SQL Server.
+There's no automated test suite. Changes are verified by running the app
+against a real SQL Server instance.
 
-At minimum, before opening a PR, exercise the paths your change touches:
+Before opening a pull request, exercise the paths your change affects:
 
-- Connect, load an existing location, and confirm the roster renders
-- Assign a ticket and confirm the rotation advances and counts increment
-- Set a status with a date range, including a half day, and confirm availability
-  is respected
-- Make a change, then confirm a second client picks it up (the background thread
-  polls every 0.5s)
-- Quit and relaunch, confirming settings and data persisted
+1. Connect, load an existing location, and confirm the roster displays.
+2. Assign a ticket. Confirm the rotation advances and the counts increase.
+3. Set a status with a date range, including a half day, and confirm the
+   rotation respects it.
+4. Make a change and confirm a second client picks it up. The background thread
+   polls every 0.5 seconds.
+5. Quit and restart the app. Confirm settings and data persisted.
 
-If your change touches `db.py`, test on both backends if you can. If you only
-have one platform, say so in the PR — that is useful information, not a
-disqualification.
+If your change affects `db.py`, test both backends if you can. If you have only
+one platform, say so in the pull request. That's useful information, not a
+problem.
 
-If your change touches `packaging/`, build the app and run the built artifact.
-A frozen bundle fails in ways running from source does not.
+If your change affects `packaging/`, build the app and run the result. A frozen
+bundle fails in ways that running from source doesn't.
 
 ## Pull requests
 
 - Branch from `master`.
-- Keep PRs focused. One behavioural change per PR.
-- Explain *why* in the description, not just what — see the
-  [PR template](.github/PULL_REQUEST_TEMPLATE.md).
-- Note which platform(s) you tested on.
+- Keep each pull request to one behavioral change.
+- Explain why the change is needed, not only what it does. See the
+  [pull request template](.github/PULL_REQUEST_TEMPLATE.md).
+- State which platforms you tested on.
 
 ## Schema changes
 
-`ensure_schema()` applies `src/schema.sql` and is expected to be idempotent, and
-`_schema_is_current()` does a cheap check to avoid replaying it on every launch.
-If you add a table or column:
+`ensure_schema()` applies `src/schema.sql` and must remain idempotent.
+`_schema_is_current()` does a single-query check so the DDL isn't replayed on
+every launch.
 
-1. Add it to `schema.sql` in an `IF NOT EXISTS`-guarded form
+To add a table or column:
+
+1. Add it to `schema.sql`, guarded so it's only created if it doesn't exist.
 2. Update the counts in `_schema_is_current()` so the check still detects a
-   current schema
-3. Make sure existing databases upgrade cleanly — people run this against live
-   data, and there is no migration framework
+   current schema.
+3. Confirm an existing database upgrades cleanly. There's no migration
+   framework, and this app runs against live data.
 
 ## Reporting bugs
 
 Use the [issue templates](https://github.com/ptrip3/TicketAssignment/issues/new/choose).
-The platform and backend fields matter more than they might look — a good share
-of issues turn out to be specific to one of the two database drivers.
+The platform and backend fields matter more than they might appear. Many issues
+turn out to affect only one of the two database drivers.
+
+For security issues, don't open a public issue. See [SECURITY.md](SECURITY.md).
