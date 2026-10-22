@@ -64,6 +64,42 @@ APP_DATE = "2026-08-18"
 APP_NAME = "Ticket Assignment"
 
 
+# How often the background thread re-reads the database, and the ceiling
+# it backs off to after a failure.
+REFRESH_INTERVAL_SECONDS = 0.5
+REFRESH_MAX_BACKOFF_SECONDS = 30
+
+# Substrings identifying a rejected credential rather than a transient
+# fault. These must never be retried on a timer: every refresh opens a
+# fresh connection (see db.py), so a rejected credential becomes a login
+# attempt against the domain controller twice a second, which locks the
+# account out within seconds. Event 4776 with status 0xC0000234 on the DC
+# is what that looks like from the other side.
+_AUTH_FAILURE_MARKERS = (
+    "28000",            # SQLSTATE for invalid authorization specification
+    "18452",            # login is from an untrusted domain
+    "18456",            # login failed for user
+    "login failed",
+    "locked out",
+    "account is locked",
+    "password has expired",
+    "logon failure",
+    "logonfailure",    # python-tds spells it as one word
+    "cannot be used with integrated authentication",
+)
+
+
+def _is_auth_failure(error):
+    """Whether `error` means the credentials were rejected.
+
+    Matched on text because the two backends raise different exception
+    types for the same condition, and db.py flattens both into
+    DatabaseError with the driver message preserved.
+    """
+    text = str(error).lower()
+    return any(marker in text for marker in _AUTH_FAILURE_MARKERS)
+
+
 def _app_dir():
     """The directory the running script or frozen executable lives in."""
     if getattr(sys, "frozen", False):
@@ -857,18 +893,63 @@ class TicketAssignmentApp:
             return
 
         def refresh_data():
+            delay = REFRESH_INTERVAL_SECONDS
             while self.is_initialized:
                 try:
                     if hasattr(self, "root") and self.root.winfo_exists():
                         self._refresh_data()
                     else:
                         return
+                    delay = REFRESH_INTERVAL_SECONDS
                 except Exception as e:
-                    print(f"Background refresh error: {e}")
-                time.sleep(0.5)
+                    if _is_auth_failure(e):
+                        # Stop the thread outright. Retrying a rejected
+                        # credential every half second is what locks the
+                        # account out, and no amount of waiting fixes it
+                        # -- it needs the connection settings changed.
+                        print(f"Background refresh stopped, credentials rejected: {e}")
+                        self._report_refresh_auth_failure(e)
+                        return
+                    # Transient faults (server restarting, network drop)
+                    # do resolve on their own, so keep retrying, but back
+                    # off rather than hammering a server that is down.
+                    delay = min(delay * 2, REFRESH_MAX_BACKOFF_SECONDS)
+                    print(f"Background refresh error, retrying in {delay}s: {e}")
+                time.sleep(delay)
 
         self.refresh_thread = threading.Thread(target=refresh_data, daemon=True)
         self.refresh_thread.start()
+
+    def _report_refresh_auth_failure(self, error):
+        """Tell the user the background refresh gave up on bad credentials.
+
+        Shown once, from the UI thread. Without this the app looks like it
+        is still live while silently serving data frozen at the moment the
+        credentials stopped working.
+        """
+        if getattr(self, "_refresh_auth_failure_reported", False):
+            return
+        self._refresh_auth_failure_reported = True
+
+        def show():
+            try:
+                if not (hasattr(self, "root") and self.root.winfo_exists()):
+                    return
+                messagebox.showerror(
+                    "Database Connection Lost",
+                    "The database rejected the saved credentials, so live "
+                    "updates have stopped.\n\n"
+                    "Displayed data may be out of date. Reconnect from "
+                    "File \u2192 Change Database Connection.\n\n"
+                    f"{error}",
+                )
+            except Exception as e:
+                print(f"Could not report refresh auth failure: {e}")
+
+        try:
+            self.root.after_idle(show)
+        except Exception as e:
+            print(f"Could not schedule refresh auth failure dialog: {e}")
 
     def _refresh_data(self):
         """Refresh data from the database without disrupting current operation."""
@@ -923,6 +1004,11 @@ class TicketAssignmentApp:
                     values = sorted(list(self.locations[current_location]["names"]))
                     self.root.after_idle(lambda: self.schedule_name_combo.configure(values=values))
         except Exception as e:
+            # Rejected credentials propagate so the refresh loop can stop
+            # retrying them. Everything else is transient and swallowed,
+            # as a failed refresh just means the display is briefly stale.
+            if _is_auth_failure(e):
+                raise
             print(f"Data refresh error: {e}")
 
     def _update_all_displays(self):
