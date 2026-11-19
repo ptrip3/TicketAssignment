@@ -61,17 +61,36 @@ packaging/    building and deploying
 tools/        one-off admin scripts
   migrate_json_to_sql.py   importer for the older JSON-file version
   merge_locations.sql      merges two locations into one
+  assignment_history.sql   reporting queries over the assignment audit log
 ```
 
 `schema.sql` is stored next to `db.py` rather than in `tools/` because it's a
 runtime resource. `db.py` reads it to create missing tables, and it's bundled
 into the built app.
 
-The database has five tables: `Locations`, `Names`, `DailyCounts`, `Schedules`,
-and `StatusEntries`. `Names` holds one row per person per location, and its
-`QueuePosition` column encodes the round-robin order. `StatusEntries` holds all
-status types in one table, keyed by type. For the full DDL and design notes,
-see `schema.sql`.
+The database has six tables: `Locations`, `Names`, `DailyCounts`, `Schedules`,
+`StatusEntries`, and `Assignments`. `Names` holds one row per person per
+location, and its `QueuePosition` column encodes the round-robin order.
+`StatusEntries` holds all status types in one table, keyed by type. For the
+full DDL and design notes, see `schema.sql`.
+
+`Assignments` is an append-only audit log, one row per ticket assigned: when,
+which location, who it went to, and which account did it. The assigner and
+hostname are filled in by SQL Server itself from the connection
+(`SUSER_SNAME()`, `HOST_NAME()`), so they reflect who actually connected rather
+than anything the client claims. With Windows Integrated Auth or NTLM that is
+the caller's domain account — note it records the account the app is *running
+as*, which is the elevated one if it was launched that way.
+
+It deliberately has no foreign keys, unlike every other table. A location save
+deletes and reinserts that location's `Names`, regenerating every `NameId`, so
+a reference to one would be cascade-deleted almost immediately. Storing names
+and locations as text also means the history outlives a renamed, merged or
+deleted location. It is written on its own path (`record_assignment()`), never
+through `save_location()`, and a failure to log is reported but never aborts
+the assignment itself. `tools/assignment_history.sql` has ready-made reporting
+queries, plus a retention statement — this is the one table that grows without
+bound.
 
 Every write goes through `save_location()` in `db.py`. This replaces one
 location's entire set of names, counts, schedules, and statuses in a single

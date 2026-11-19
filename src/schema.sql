@@ -119,3 +119,38 @@ BEGIN
     ALTER TABLE dbo.StatusEntries ADD HalfDayPeriod NVARCHAR(10) NULL;
 END
 GO
+GO
+
+-- Append-only log of individual ticket assignments, for answering "who
+-- assigned what to whom". Added after the tables above, so it is created
+-- on existing installs too.
+--
+-- Deliberately has NO foreign keys, unlike every other table here.
+-- save_location() deletes and reinserts a location's Names on every save,
+-- so NameId is regenerated constantly -- a reference to it would be
+-- cascade-deleted almost immediately. Names and locations are stored as
+-- text so the history also outlives a renamed, merged or deleted
+-- location, which is the whole point of an audit log.
+--
+-- AssignedBy and HostName default to the server's own view of the
+-- connection rather than anything the client passes in. With Windows
+-- Integrated Auth (Windows) or NTLM (macOS) that is the caller's domain
+-- account, so it cannot be spoofed by the app and needs no extra config.
+-- Note this records whichever account the app is RUNNING AS, which is the
+-- elevated account if it was launched with one.
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'Assignments' AND schema_id = SCHEMA_ID('dbo'))
+BEGIN
+    CREATE TABLE dbo.Assignments (
+        AssignmentId  BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        AssignedAtUtc DATETIME2(0)  NOT NULL CONSTRAINT DF_Assignments_AtUtc DEFAULT SYSUTCDATETIME(),
+        LocationName  NVARCHAR(100) NOT NULL,
+        PersonName    NVARCHAR(200) NOT NULL,
+        AssignedBy    NVARCHAR(256) NOT NULL CONSTRAINT DF_Assignments_By   DEFAULT SUSER_SNAME(),
+        HostName      NVARCHAR(128) NULL     CONSTRAINT DF_Assignments_Host DEFAULT HOST_NAME()
+    );
+
+    -- "what did this person get, and from whom" is the main query;
+    -- the second index covers plain date-range reporting.
+    CREATE INDEX IX_Assignments_Person ON dbo.Assignments (PersonName, AssignedAtUtc);
+    CREATE INDEX IX_Assignments_AtUtc  ON dbo.Assignments (AssignedAtUtc);
+END

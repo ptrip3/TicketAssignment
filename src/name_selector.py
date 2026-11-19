@@ -1176,6 +1176,10 @@ class TicketAssignmentApp:
             if current_name not in loc_data["daily_counts"]:
                 loc_data["daily_counts"][current_name] = {day: 0 for day in day_name}
             loc_data["daily_counts"][current_name][current_day] += 1
+            # Append-only audit row, written alongside the counters so the
+            # log and the tallies can't drift. Deliberately not part of
+            # the location save, which rewrites rows wholesale.
+            self.db.record_assignment(self.current_location.get(), current_name)
 
         next_name = None
         names_list = list(loc_data["names"])

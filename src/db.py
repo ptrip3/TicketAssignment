@@ -370,12 +370,12 @@ class Database:
         cur.execute(
             "SELECT"
             " (SELECT COUNT(*) FROM sys.tables WHERE schema_id = SCHEMA_ID('dbo')"
-            "  AND name IN ('Locations','Names','DailyCounts','Schedules','StatusEntries')),"
+            "  AND name IN ('Locations','Names','DailyCounts','Schedules','StatusEntries','Assignments')),"
             " (SELECT COUNT(*) FROM sys.columns WHERE object_id = OBJECT_ID('dbo.StatusEntries')"
             "  AND name IN ('HalfDay','HalfDayPeriod'))"
         )
         tables, columns = cur.fetchone()
-        return tables == 5 and columns == 2
+        return tables == 6 and columns == 2
 
     # ------------------------------------------------------------------
     # Reads
@@ -456,6 +456,56 @@ class Database:
     # ------------------------------------------------------------------
     # Writes
     # ------------------------------------------------------------------
+
+    def record_assignment(self, location_name, person_name):
+        """Append one row to the assignment log.
+
+        Separate from save_location() on purpose: that deletes and
+        reinserts a location's rows, so anything written through it would
+        be destroyed on the next save. This only ever INSERTs.
+
+        AssignedBy and HostName are left to the table's defaults, so the
+        server records who connected rather than trusting anything the
+        client sends.
+
+        Never raises. An assignment that happened is more important than
+        its audit row, so a logging failure is reported and swallowed
+        rather than losing the rotation the user just performed.
+        """
+        try:
+            with self._connect() as conn:
+                self._cursor(conn).execute(
+                    "INSERT INTO dbo.Assignments (LocationName, PersonName) VALUES (?, ?)",
+                    (location_name, person_name),
+                )
+        except Exception as e:
+            print(f"Could not record assignment for {person_name!r}: {type(e).__name__}: {e}")
+
+    def assignment_history(self, person_name=None, since=None, limit=500):
+        """Rows from the assignment log, newest first.
+
+        person_name filters to one person; since is a datetime lower bound
+        on AssignedAtUtc. Returns a list of dicts.
+        """
+        sql = [
+            "SELECT TOP (?) AssignedAtUtc, LocationName, PersonName, AssignedBy, HostName",
+            "FROM dbo.Assignments",
+        ]
+        params = [int(limit)]
+        where = []
+        if person_name:
+            where.append("PersonName = ?")
+            params.append(person_name)
+        if since is not None:
+            where.append("AssignedAtUtc >= ?")
+            params.append(since)
+        if where:
+            sql.append("WHERE " + " AND ".join(where))
+        sql.append("ORDER BY AssignedAtUtc DESC")
+        with self._connect() as conn:
+            cur = self._cursor(conn).execute(" ".join(sql), tuple(params))
+            columns = ("assigned_at_utc", "location", "person", "assigned_by", "host")
+            return [dict(zip(columns, row)) for row in cur.fetchall()]
 
     def save_location(self, location_name, location_data):
         """Persist one location's full in-memory state.
